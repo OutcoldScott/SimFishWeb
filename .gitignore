@@ -28,6 +28,11 @@ var/
 venv/
 ENV/
 
+# Godot - editor cache + headless capture outputs (regenerated on demand).
+shaders-godot/godot-project/.godot/
+shaders-godot/godot-project/capture_raw.png
+shaders-godot/godot-project/capture_quantized.png
+
 # OS generated files
 .DS_Store
 .DS_Store?

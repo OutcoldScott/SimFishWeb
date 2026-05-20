@@ -24,28 +24,33 @@ const BREEDING_INTERVAL_MAX: float = 180.0
 const MATURITY_AGE: float = 60.0          # baby -> adult after a minute
 
 var _direction: Vector2 = Vector2.RIGHT     # in wall-tangent space
+var _facing: Vector2 = Vector2.RIGHT        # smoothed direction the body points
 var _t_until_turn: float = 0.0
 var _paused: bool = false
 var _age: float = 0.0
 var _t_until_breed: float = 0.0
+# Foot-pulse phase: snails locomote by rhythmic muscular waves through their
+# foot. We mimic this by oscillating the body's vertical scale + a tiny
+# forward "step" added to the slide velocity. The fast-moving snails have
+# more visible pulses; paused snails don't pulse.
+var _pulse_phase: float = 0.0
 
 
 func _ready() -> void:
 	_choose_new_direction()
+	_facing = _direction
 	_t_until_breed = randf_range(BREEDING_INTERVAL_MIN, BREEDING_INTERVAL_MAX)
+	_pulse_phase = randf() * TAU
 	if is_baby:
 		scale = Vector3.ONE * 0.5
 
 
 func _process(dt: float) -> void:
 	_age += dt
-	# Babies grow into adults over time.
+	# Babies grow into adults over time. _apply_squash() reads is_baby + _age
+	# to compute scale, so we just flip the flag here.
 	if is_baby and _age >= MATURITY_AGE:
 		is_baby = false
-		# Animate the scale change.
-	if is_baby:
-		var growth: float = clampf(_age / MATURITY_AGE, 0.5, 1.0)
-		scale = Vector3.ONE * (0.5 + 0.5 * growth)
 
 	_t_until_turn -= dt
 	if _t_until_turn <= 0.0:
@@ -58,23 +63,57 @@ func _process(dt: float) -> void:
 			_lay_egg_sac()
 			_t_until_breed = randf_range(BREEDING_INTERVAL_MIN, BREEDING_INTERVAL_MAX)
 
-	if _paused:
-		return
+	# Smoothly turn the visual "facing" toward the target direction. Snails
+	# don't snap directions; they pivot slowly.
+	_facing = _facing.lerp(_direction, clampf(dt * 1.2, 0.0, 1.0))
 
 	# Build tangent vectors for this wall.
 	var up := Vector3.UP
 	var tangent: Vector3
 	if absf(wall_normal.dot(up)) > 0.95:
-		# Top/bottom walls - unlikely but handle.
 		tangent = Vector3.RIGHT
 	else:
 		tangent = wall_normal.cross(up).normalized()
-	var delta: Vector3 = tangent * _direction.x + up * _direction.y
-	position += delta * SPEED * dt
+
+	# Foot-pulse motion. Phase advances at ~1.5 Hz; speed and shell-vertical
+	# squash are modulated by sin(phase), creating a "creep" gait. Snails
+	# move noticeably only on the forward stroke of the pulse.
+	if _paused:
+		# Still pulse a little when paused (breathing).
+		_pulse_phase += dt * 0.6
+		var idle_squash: float = 1.0 + sin(_pulse_phase) * 0.04
+		_apply_squash(idle_squash, up)
+		return
+
+	_pulse_phase += dt * 1.5
+	# Pulse-driven forward velocity: peaks at +SPEED * 1.6, dips to ~0.
+	var pulse_factor: float = 0.5 + 0.5 * sin(_pulse_phase)  # 0..1
+	var gait_speed: float = SPEED * (0.4 + 1.2 * pulse_factor)
+	var delta: Vector3 = tangent * _facing.x + up * _facing.y
+	position += delta * gait_speed * dt
+
+	# Visual squash: shell expands then compresses through the pulse, like the
+	# body wave passing through it.
+	var squash: float = 1.0 + (pulse_factor - 0.5) * 0.18
+	_apply_squash(squash, up)
+
 	# Clamp to wall rectangle.
 	position.x = clampf(position.x, wall_min.x, wall_max.x)
 	position.y = clampf(position.y, wall_min.y, wall_max.y)
 	position.z = clampf(position.z, wall_min.z, wall_max.z)
+
+
+func _apply_squash(squash_y: float, _up: Vector3) -> void:
+	# Apply vertical squash by scaling on the wall-normal axis (which is the
+	# snail's "up" relative to its wall). Use absolute scale (preserve current
+	# baby/adult size factor).
+	var base: float = 0.5 if is_baby else 1.0
+	# Animate growth from 0.5 -> 1.0 for babies as they age.
+	if is_baby:
+		base = 0.5 + 0.5 * clampf(_age / MATURITY_AGE, 0.0, 1.0)
+	# Squash along wall_normal direction (the "thickness" of the snail).
+	# Approximation: just scale on Y if wall is vertical-ish.
+	scale = Vector3(base, base * squash_y, base)
 
 
 func _lay_egg_sac() -> void:

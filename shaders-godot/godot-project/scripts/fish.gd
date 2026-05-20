@@ -68,10 +68,25 @@ var burst_remaining: float = 0.0
 # brain ticks slowly.
 var target_velocity: Vector3 = Vector3.ZERO
 
-# Animation - parts of the body that wag during swimming.
-var _tail_pivot: Node3D = null      # rotates Y to wag the tail fin
-var _body_mid_pivot: Node3D = null  # mild lateral undulation of mid-body
+# Animation + transform pivots.
+#   _bank_pivot wraps the body and rotates around its local Z (forward axis)
+#   to roll/bank into turns.
+#   _tail_pivot wags side-to-side.
+#   _body_mid_pivot counter-wags.
+var _bank_pivot: Node3D = null
+var _tail_pivot: Node3D = null
+var _body_mid_pivot: Node3D = null
 var _swim_phase: float = 0.0
+var _last_yaw: float = 0.0
+var _bank: float = 0.0
+
+# Heading + speed motion model (separates direction from magnitude). Real
+# fish accelerate forward via tail thrust and steer via slow heading changes,
+# they can't slide sideways. This gives us proper momentum + turn-radius.
+var heading: Vector3 = Vector3.FORWARD  # unit vector, faces -Z initially
+var speed: float = 0.0
+var max_turn_rate: float = 2.6   # radians/sec - how fast the fish can yaw
+var linear_accel: float = 2.5    # units/sec^2 - how fast speed changes
 
 # ---- Refs ----
 var sim: Node = null
@@ -84,6 +99,12 @@ func _ready() -> void:
 		randf_range(-0.5, 0.5),
 	)
 	_swim_phase = randf() * TAU
+	# Start each fish facing a random horizontal direction so newborn fry
+	# don't all stare the same way.
+	var theta: float = randf() * TAU
+	heading = Vector3(sin(theta), 0.0, -cos(theta))
+	_last_yaw = atan2(heading.x, -heading.z)
+	speed = 0.0
 
 
 # ---- Setup ----
@@ -117,16 +138,20 @@ func _maturity_scale() -> float:
 
 
 func _build_body() -> void:
-	# Voxel fish facing +X. Layout:
-	#   - Head:        rigid, contains eye
-	#   - BodyMid:     pivot rotates Y mildly for undulation
-	#   - TailPivot:   pivot at the tail base, wags Y strongly for the swim
-	#   - DorsalFin:   small block on top
-	#   - AnalFin:     small block on bottom
+	# Voxel fish facing -Z (Godot's default "forward"). With look_at, the fish
+	# faces its velocity correctly without extra rotation tricks.
 	#
-	# Body widths sample a teardrop profile - thicker just behind the head,
-	# tapering to the tail. Each segment is built from a few voxels of slightly
-	# different shades so the fish has visible depth.
+	# Hierarchy:
+	#   Fish (this Node3D - look_at faces velocity, position updates each frame)
+	#   └── BankPivot (rolls around local Z to bank into turns)
+	#       ├── Head (rigid)
+	#       ├── BodyMid (gentle counter-wag around Y)
+	#       └── TailPivot (strong wag around Y at the tail base)
+	#
+	# Axes:
+	#   -Z = forward (head direction)
+	#   +X = right (lateral, where stripes and pectorals go)
+	#   +Y = up
 	var v: float = adult_voxel_scale
 	var mat_body := _make_mat(base_color)
 	var mat_top := _make_mat(base_color.lightened(0.15))
@@ -135,78 +160,81 @@ func _build_body() -> void:
 	var mat_eye := _make_mat(Color8(11, 26, 34))
 	var mat_fin := _make_mat(base_color.darkened(0.15))
 
-	# ---- HEAD (rigid, sits at x = -3v..-2v) ----
+	_bank_pivot = Node3D.new()
+	_bank_pivot.name = "BankPivot"
+	add_child(_bank_pivot)
+
+	# ---- HEAD (rigid, at z = -2.5v, the front of the fish) ----
 	var head := Node3D.new()
 	head.name = "Head"
-	add_child(head)
-	_add_voxel_to(head, Vector3(-2.5 * v, 0, 0), Vector3(v, v * 0.9, v * 0.95), mat_body)
-	# Forehead/top - lighter (catches more light).
-	_add_voxel_to(head, Vector3(-2.5 * v, v * 0.5, 0), Vector3(v, v * 0.3, v * 0.6), mat_top)
+	_bank_pivot.add_child(head)
+	_add_voxel_to(head, Vector3(0, 0, -2.5 * v), Vector3(v * 0.95, v * 0.9, v), mat_body)
+	# Forehead - lighter, catches the top face shading.
+	_add_voxel_to(head, Vector3(0, v * 0.5, -2.5 * v), Vector3(v * 0.6, v * 0.3, v), mat_top)
 	# Belly under head.
-	_add_voxel_to(head, Vector3(-2.5 * v, -v * 0.5, 0), Vector3(v, v * 0.3, v * 0.6), mat_belly)
-	# Eye - one small dark block on each side.
-	_add_voxel_to(head, Vector3(-2.4 * v, v * 0.1, v * 0.4),
-		Vector3(v * 0.25, v * 0.25, v * 0.2), mat_eye)
-	_add_voxel_to(head, Vector3(-2.4 * v, v * 0.1, -v * 0.4),
-		Vector3(v * 0.25, v * 0.25, v * 0.2), mat_eye)
+	_add_voxel_to(head, Vector3(0, -v * 0.5, -2.5 * v), Vector3(v * 0.6, v * 0.3, v), mat_belly)
+	# Eyes - one on each lateral side of the head.
+	_add_voxel_to(head, Vector3(v * 0.4, v * 0.1, -2.4 * v),
+		Vector3(v * 0.2, v * 0.25, v * 0.25), mat_eye)
+	_add_voxel_to(head, Vector3(-v * 0.4, v * 0.1, -2.4 * v),
+		Vector3(v * 0.2, v * 0.25, v * 0.25), mat_eye)
 
-	# ---- BODY MID (slight wag) - the thickest part of the fish ----
+	# ---- BODY MID (gentle counter-wag) - thickest part of the fish ----
 	_body_mid_pivot = Node3D.new()
 	_body_mid_pivot.name = "BodyMid"
-	_body_mid_pivot.position = Vector3(-1.5 * v, 0, 0)
-	add_child(_body_mid_pivot)
-	# Segments at x offsets 0, v, 2v (relative to pivot).
+	_body_mid_pivot.position = Vector3(0, 0, -1.5 * v)
+	_bank_pivot.add_child(_body_mid_pivot)
+	# Segments at z offsets 0, v, 2v (back along the body from the pivot).
 	var seg_widths: Array[float] = [1.15, 1.20, 1.0]
 	for i in seg_widths.size():
 		var bw: float = seg_widths[i]
 		var bs: float = v * bw
-		var bx: float = i * v
-		_add_voxel_to(_body_mid_pivot, Vector3(bx, 0, 0),
-			Vector3(v, bs, bs * 0.95), mat_body)
+		var bz: float = i * v
+		_add_voxel_to(_body_mid_pivot, Vector3(0, 0, bz),
+			Vector3(bs * 0.95, bs, v), mat_body)
 		# Top + belly accents.
-		_add_voxel_to(_body_mid_pivot, Vector3(bx, bs * 0.5, 0),
-			Vector3(v, v * 0.25, bs * 0.55), mat_top)
-		_add_voxel_to(_body_mid_pivot, Vector3(bx, -bs * 0.5, 0),
-			Vector3(v, v * 0.25, bs * 0.55), mat_belly)
-	# Lateral stripe accent along the body's side.
+		_add_voxel_to(_body_mid_pivot, Vector3(0, bs * 0.5, bz),
+			Vector3(bs * 0.55, v * 0.25, v), mat_top)
+		_add_voxel_to(_body_mid_pivot, Vector3(0, -bs * 0.5, bz),
+			Vector3(bs * 0.55, v * 0.25, v), mat_belly)
+	# Lateral stripe accent along both sides.
 	for i in seg_widths.size():
-		_add_voxel_to(_body_mid_pivot, Vector3(i * v, 0, v * 0.5),
-			Vector3(v * 0.9, v * 0.35, v * 0.15), mat_accent)
-		_add_voxel_to(_body_mid_pivot, Vector3(i * v, 0, -v * 0.5),
-			Vector3(v * 0.9, v * 0.35, v * 0.15), mat_accent)
-	# Dorsal fin (top, behind midpoint).
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 1.0, v * 0.95, 0),
-		Vector3(v * 1.2, v * 0.4, v * 0.15), mat_fin)
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 1.2, v * 1.2, 0),
-		Vector3(v * 0.6, v * 0.25, v * 0.12), mat_fin)
+		_add_voxel_to(_body_mid_pivot, Vector3(v * 0.5, 0, i * v),
+			Vector3(v * 0.15, v * 0.35, v * 0.9), mat_accent)
+		_add_voxel_to(_body_mid_pivot, Vector3(-v * 0.5, 0, i * v),
+			Vector3(v * 0.15, v * 0.35, v * 0.9), mat_accent)
+	# Dorsal fin (top).
+	_add_voxel_to(_body_mid_pivot, Vector3(0, v * 0.95, v * 1.0),
+		Vector3(v * 0.15, v * 0.4, v * 1.2), mat_fin)
+	_add_voxel_to(_body_mid_pivot, Vector3(0, v * 1.2, v * 1.2),
+		Vector3(v * 0.12, v * 0.25, v * 0.6), mat_fin)
 	# Anal fin (bottom).
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 1.6, -v * 0.85, 0),
-		Vector3(v * 0.7, v * 0.35, v * 0.12), mat_fin)
-	# Pectoral fins (sides, behind head).
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 0.2, -v * 0.1, v * 0.6),
-		Vector3(v * 0.5, v * 0.25, v * 0.12), mat_fin)
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 0.2, -v * 0.1, -v * 0.6),
-		Vector3(v * 0.5, v * 0.25, v * 0.12), mat_fin)
+	_add_voxel_to(_body_mid_pivot, Vector3(0, -v * 0.85, v * 1.6),
+		Vector3(v * 0.12, v * 0.35, v * 0.7), mat_fin)
+	# Pectoral fins (sides, just behind head).
+	_add_voxel_to(_body_mid_pivot, Vector3(v * 0.6, -v * 0.1, v * 0.2),
+		Vector3(v * 0.12, v * 0.25, v * 0.5), mat_fin)
+	_add_voxel_to(_body_mid_pivot, Vector3(-v * 0.6, -v * 0.1, v * 0.2),
+		Vector3(v * 0.12, v * 0.25, v * 0.5), mat_fin)
 
-	# ---- TAIL (strong wag) - tail base at body's end, fin extends further ----
+	# ---- TAIL (strong wag) - tail base at the rear of the body ----
 	_tail_pivot = Node3D.new()
 	_tail_pivot.name = "TailPivot"
-	# Pivot at the end of the body so rotation wags the whole tail visibly.
-	_tail_pivot.position = Vector3(1.5 * v, 0, 0)
-	add_child(_tail_pivot)
+	_tail_pivot.position = Vector3(0, 0, 1.5 * v)
+	_bank_pivot.add_child(_tail_pivot)
 	# Tail peduncle (narrow connector).
 	_add_voxel_to(_tail_pivot, Vector3(0, 0, 0),
-		Vector3(v, v * 0.6, v * 0.5), mat_body)
-	# Forked tail fin - top prong + bottom prong.
-	_add_voxel_to(_tail_pivot, Vector3(v * 0.9, v * 0.45, 0),
-		Vector3(v * 0.6, v * 0.4, v * 0.15), mat_fin)
-	_add_voxel_to(_tail_pivot, Vector3(v * 0.9, -v * 0.45, 0),
-		Vector3(v * 0.6, v * 0.4, v * 0.15), mat_fin)
-	# Outer fin tips (a bit further back).
-	_add_voxel_to(_tail_pivot, Vector3(v * 1.4, v * 0.7, 0),
-		Vector3(v * 0.4, v * 0.3, v * 0.12), mat_fin)
-	_add_voxel_to(_tail_pivot, Vector3(v * 1.4, -v * 0.7, 0),
-		Vector3(v * 0.4, v * 0.3, v * 0.12), mat_fin)
+		Vector3(v * 0.5, v * 0.6, v), mat_body)
+	# Forked tail fin - top + bottom prongs.
+	_add_voxel_to(_tail_pivot, Vector3(0, v * 0.45, v * 0.9),
+		Vector3(v * 0.15, v * 0.4, v * 0.6), mat_fin)
+	_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.45, v * 0.9),
+		Vector3(v * 0.15, v * 0.4, v * 0.6), mat_fin)
+	# Outer fin tips, further back.
+	_add_voxel_to(_tail_pivot, Vector3(0, v * 0.7, v * 1.4),
+		Vector3(v * 0.12, v * 0.3, v * 0.4), mat_fin)
+	_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.7, v * 1.4),
+		Vector3(v * 0.12, v * 0.3, v * 0.4), mat_fin)
 
 
 func _add_voxel_to(parent: Node3D, pos: Vector3, size: Vector3, mat: Material) -> void:
@@ -377,22 +405,68 @@ func tick(dt: float, neighbors: Array, plants: Array, world_bounds: AABB) -> Dic
 	return events
 
 
-# Per-frame: smooth velocity toward target (set by 10Hz brain), apply position,
-# update facing, animate swim tail. Keeps motion buttery while brain ticks slowly.
+# Per-frame: bounded-turn-rate steering + speed acceleration + banking. The
+# brain (tick at 10Hz) produces target_velocity; this physics layer translates
+# it into smooth heading + speed changes that respect momentum.
+#
+# Fish can't slide sideways, can't 180° in place, and bank into yaw turns.
 func _process(dt: float) -> void:
-	# Smooth current velocity toward the target the brain wants.
-	velocity = velocity.lerp(target_velocity, clampf(dt * 3.0, 0.0, 1.0))
+	# Decompose the brain's target into a desired direction + desired speed.
+	var target_dir: Vector3 = heading
+	var target_spd: float = 0.0
+	if target_velocity.length_squared() > 0.0001:
+		target_spd = target_velocity.length()
+		target_dir = target_velocity.normalized()
+
+	# ---- Rotate heading toward target_dir, bounded by max_turn_rate ----
+	var angle: float = heading.angle_to(target_dir)
+	if angle > 0.0005:
+		var axis: Vector3 = heading.cross(target_dir)
+		if axis.length_squared() < 1e-6:
+			# Heading and target are antiparallel - pick a sensible axis.
+			axis = Vector3.UP
+		axis = axis.normalized()
+		var max_step: float = max_turn_rate * dt
+		# Fish turn slower vertically than horizontally - real fish have a hard
+		# time pitching up/down sharply. Project the turn onto a mostly-horizontal
+		# axis by reducing its UP component.
+		var horizontal_axis: Vector3 = axis
+		horizontal_axis.y *= 0.5
+		if horizontal_axis.length_squared() > 1e-6:
+			axis = horizontal_axis.normalized()
+		var turn: float = minf(max_step, angle)
+		heading = heading.rotated(axis, turn).normalized()
+
+	# ---- Accelerate speed toward target_spd, bounded by linear_accel ----
+	speed = move_toward(speed, target_spd, linear_accel * dt)
+
+	# ---- Apply translation ----
+	velocity = heading * speed
 	position += velocity * dt
 
-	# Face the direction of travel.
-	if velocity.length_squared() > 0.0001:
-		var dir: Vector3 = velocity.normalized()
-		if absf(dir.dot(Vector3.UP)) < 0.95:
-			look_at(position + velocity, Vector3.UP)
+	# ---- Face the heading. look_at points local -Z at the target. Body is
+	# built so its forward = -Z, so the fish faces its motion correctly. ----
+	if heading.length_squared() > 0.0001:
+		var d: Vector3 = heading
+		# Avoid look_at singularity when heading is straight up/down.
+		if absf(d.dot(Vector3.UP)) > 0.95:
+			d = (d + Vector3(0.0001, 0, 0)).normalized()
+		look_at(position + d, Vector3.UP)
 
-	# Swim animation: tail wags + body slightly counter-wags. Frequency
-	# scales with speed - hovering fish wag slowly, dashing fish wag fast.
-	var speed: float = velocity.length()
+	# ---- Banking into yaw turns ----
+	# Compute the world-space yaw of the heading on the XZ plane. The change
+	# in yaw between frames is the yaw rate; bank angle is proportional to it.
+	var current_yaw: float = atan2(heading.x, -heading.z)
+	var yaw_diff: float = wrapf(current_yaw - _last_yaw, -PI, PI)
+	_last_yaw = current_yaw
+	var yaw_rate: float = yaw_diff / maxf(dt, 0.0001)
+	var bank_target: float = clampf(-yaw_rate * 0.35, -0.6, 0.6)
+	_bank = lerpf(_bank, bank_target, clampf(dt * 5.0, 0.0, 1.0))
+	if _bank_pivot != null:
+		_bank_pivot.rotation.z = _bank
+
+	# ---- Swim animation: tail wag scales with speed ----
+	# Hovering fish pulse slowly, dashing fish whip fast.
 	var wag_freq: float = 2.5 + speed * 5.5
 	_swim_phase += dt * wag_freq
 	if _tail_pivot != null:
@@ -416,42 +490,76 @@ func _update_maturity() -> void:
 # ---- Boids ----
 
 func _boids(neighbors: Array, tightness: float = 1.0) -> Vector3:
-	# Standard 3-rule boids with two upgrades:
-	#   - `tightness` shrinks the personal-space radius and amplifies cohesion,
-	#     so stressed/threatened fish form tight balls and feeding fish spread.
-	#   - Alignment and cohesion only count conspecifics; separation considers
-	#     all neighbors (you don't want to swim into another species either).
+	# Improved schooling. Three rules (sep + ali + coh) with three upgrades:
+	#   1. View cone - a fish ignores conspecifics outside ~120° of its forward
+	#      heading. You can't school with fish behind you.
+	#   2. Position prediction - alignment + cohesion target where neighbors
+	#      WILL be (current pos + velocity * lookahead), not where they ARE.
+	#      This causes the school to anticipate turns and look more cohesive.
+	#   3. Speed matching - the fish drives toward the school's average speed
+	#      so the whole group cruises together.
+	#
+	# Returns a steering vector that, added to the brain's target_velocity,
+	# nudges this fish into formation. The vector's magnitude scales with how
+	# urgently the fish needs to school (tightness).
 	if neighbors.is_empty():
 		return Vector3.ZERO
+
+	const LOOKAHEAD: float = 0.4         # seconds of future-prediction
+	const VIEW_DOT_THRESHOLD: float = -0.4  # cos(~115°) - rear blind spot
+
 	var sep := Vector3.ZERO
 	var ali := Vector3.ZERO
 	var coh := Vector3.ZERO
+	var school_speed_sum: float = 0.0
 	var count_conspecific: int = 0
 	var effective_sep_radius: float = separation_radius / tightness
+	var sep_r2: float = effective_sep_radius * effective_sep_radius
+
 	for n in neighbors:
 		if not n is Fish or n == self:
 			continue
 		var f: Fish = n
 		var diff: Vector3 = position - f.position
 		var d2: float = diff.length_squared()
-		if d2 < 0.0001:
+		if d2 < 1e-4:
 			continue
-		if d2 < effective_sep_radius * effective_sep_radius:
-			# Inverse-distance push so close fish push harder.
+		# Separation considers all species (you don't want to swim into anyone).
+		if d2 < sep_r2:
 			sep += diff.normalized() / maxf(sqrt(d2), 0.1)
-		if f.species == species:
-			ali += f.velocity
-			coh += f.position
-			count_conspecific += 1
-	var steer := sep * 2.0
+		# Alignment + cohesion are conspecific-only and view-cone-gated.
+		if f.species != species:
+			continue
+		var to_neighbor: Vector3 = -diff  # f.position - position
+		var dot_v: float = heading.dot(to_neighbor.normalized())
+		if dot_v < VIEW_DOT_THRESHOLD:
+			continue  # behind us, ignore
+		var predicted_pos: Vector3 = f.position + f.velocity * LOOKAHEAD
+		ali += f.heading
+		coh += predicted_pos
+		school_speed_sum += f.speed
+		count_conspecific += 1
+
+	var steer := sep * 2.4
+
 	if count_conspecific > 0:
 		ali /= float(count_conspecific)
 		coh /= float(count_conspecific)
-		# Cohesion strengthens with tightness (stressed -> ball up).
-		var ali_strength: float = 0.7
-		var coh_strength: float = 0.8 * tightness
-		steer += (ali.normalized() if ali.length() > 0 else Vector3.ZERO) * ali_strength
-		steer += ((coh - position).normalized()) * coh_strength
+		var school_avg_speed: float = school_speed_sum / float(count_conspecific)
+		var ali_strength: float = 0.9
+		var coh_strength: float = 0.7 * tightness
+		# Alignment: steer toward avg heading.
+		if ali.length() > 0.001:
+			steer += ali.normalized() * ali_strength
+		# Cohesion: steer toward predicted center of mass.
+		var to_center: Vector3 = coh - position
+		if to_center.length() > 0.001:
+			steer += to_center.normalized() * coh_strength
+		# Speed matching: nudge in heading direction proportional to school
+		# speed delta. If the school is faster than us, accelerate.
+		var speed_delta: float = school_avg_speed - speed
+		steer += heading * clampf(speed_delta * 0.3, -0.4, 0.4)
+
 	return steer
 
 
