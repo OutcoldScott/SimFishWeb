@@ -8,7 +8,19 @@ The aesthetic is **pixel art with sim depth underneath**. Internal sim runs cont
 
 Grab the latest `Vivarium-mac.zip` from the [Releases page](https://github.com/mhsenkow/SimFish/releases). Unzip, then run `Vivarium.app`.
 
-First launch: macOS Gatekeeper will probably refuse to open an unsigned app. Right-click `Vivarium.app` → **Open** → **Open** in the dialog. macOS only nags you the first time.
+The app is ad-hoc signed but **not notarized** by Apple — macOS Gatekeeper will warn you on first launch. Two-step fix:
+
+1. **Right-click `Vivarium.app` → Open → Open** in the dialog. If macOS instead says *"Vivarium.app is damaged and can't be opened"* (Chrome downloads sometimes trigger this), open Terminal and run:
+
+   ```bash
+   xattr -dr com.apple.quarantine ~/Downloads/Vivarium.app
+   ```
+
+   then double-click again.
+
+2. macOS only nags you the first time. After that it just opens.
+
+Universal binary — runs natively on both Intel and Apple Silicon Macs.
 
 ## What's in the tank
 
