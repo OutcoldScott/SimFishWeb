@@ -1,0 +1,51 @@
+{
+  "kind": "fauna",
+  "id": "glassdart",
+  "display_name": "Glassdart",
+  "description": "Tetra-like schooling fish. Needs at least 6 of its own kind or stress climbs - visible as paler color and erratic darts. Egg scatterer.",
+  "category": "fish",
+  "morphology": {
+    "adult_length_px_range": [6, 9],
+    "shape": "torpedo",
+    "fin_morphology": { "caudal": "forked", "dorsal_size": 0.5 }
+  },
+  "behavior": {
+    "water_layer": "mid",
+    "schooling_min": 6,
+    "territorial": false,
+    "aggression": 0.1,
+    "cave_seeking": false,
+    "substrate_sift": false,
+    "algae_graze": false
+  },
+  "lifecycle": {
+    "lifespan_days_range": [600, 1500],
+    "stages": { "egg": 0, "fry": 2, "juvenile": 30, "adult": 90, "senescent": 1200 },
+    "reproduction": {
+      "mode": "egg_scatter",
+      "clutch_size_range": [30, 90],
+      "needs_pair_bond": false,
+      "parental_care_days": 0,
+      "trigger": "clean_water"
+    }
+  },
+  "diet": {
+    "preferred": ["flake", "pellet", "live"],
+    "daily_food_pct_bodymass": 0.08,
+    "starvation_days": 10
+  },
+  "tolerances": {
+    "ph_range": [6.0, 7.5],
+    "temp_c_range": [22, 28],
+    "kh_range": [1, 8],
+    "nh3_lethal": 0.5,
+    "no2_lethal": 1.0
+  },
+  "appearance": {
+    "base_palette_indices":  [42, 43, 44, 45],
+    "accent_palette_indices": [37, 38, 39, 40],
+    "pattern": "horizontal_stripe",
+    "sexual_dimorphism": false
+  },
+  "tags": ["schooling", "peaceful", "starter"]
+}

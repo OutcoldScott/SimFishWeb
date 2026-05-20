@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vivarium.example/schemas/plant.schema.json",
+  "title": "Plant species",
+  "description": "Defines a plant species: how it grows (L-system), what it needs from water + substrate, how it reproduces, how it dies. Each species file is loaded once at startup and instantiated many times during play.",
+  "type": "object",
+  "required": ["kind", "id", "display_name", "form", "lsystem", "needs", "reproduction", "appearance"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "plant" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$", "description": "Stable identifier used by save files and scripts. Never rename - alias instead." },
+    "display_name": { "type": "string" },
+    "description": { "type": "string" },
+    "form": {
+      "type": "string",
+      "enum": ["rosette", "stem", "carpet", "moss", "floater", "fern", "vine", "epiphyte"],
+      "description": "Top-level growth habit. Drives rough silhouette + collision rules."
+    },
+    "lsystem": {
+      "type": "object",
+      "description": "Lindenmayer-system specification. Symbols are interpreted by the plant renderer: F=forward, +=branch left, -=branch right, [/]=push/pop, L=leaf, R=root segment, lowercase = species-specific symbols.",
+      "required": ["axiom", "rules", "iterations", "step_length_px", "branch_angle_deg"],
+      "additionalProperties": false,
+      "properties": {
+        "axiom": { "type": "string" },
+        "rules": {
+          "type": "object",
+          "description": "Map of symbol -> replacement string. May include stochastic alternatives via 'sym?prob1:str1|prob2:str2'.",
+          "additionalProperties": { "type": "string" }
+        },
+        "iterations": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "step_length_px": { "type": "number", "minimum": 1, "maximum": 12 },
+        "branch_angle_deg": { "type": "number", "minimum": 0, "maximum": 90 },
+        "thickness_px": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 },
+        "phototropism": { "type": "number", "minimum": 0, "maximum": 1, "description": "0=no bending toward light, 1=full." },
+        "flow_tolerance": { "type": "number", "minimum": 0, "maximum": 1, "description": "0=fragile, 1=indifferent to current." }
+      }
+    },
+    "needs": {
+      "type": "object",
+      "description": "Per-tick demand per L-system segment for chemistry species. Plants pull these from water (or substrate if rooted). Starvation produces visible symptoms (yellowing, melting, pinholes).",
+      "required": ["light_min", "nutrients", "co2_min"],
+      "additionalProperties": false,
+      "properties": {
+        "light_min": { "type": "number", "minimum": 0, "maximum": 1 },
+        "light_max": { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "Above this, photoinhibition (or just bleaching - reds intensify)." },
+        "co2_min": { "type": "number", "minimum": 0, "description": "mg/L threshold below which growth slows sharply." },
+        "nutrients": {
+          "type": "object",
+          "description": "Per-tick uptake rate; missing keys default to zero.",
+          "additionalProperties": false,
+          "properties": {
+            "ammonia":   { "type": "number" },
+            "nitrate":   { "type": "number" },
+            "phosphate": { "type": "number" },
+            "potassium": { "type": "number" },
+            "iron":      { "type": "number" }
+          }
+        },
+        "prefers_substrate": { "type": "boolean", "default": true, "description": "If true, pulls nutrients from substrate before water column." }
+      }
+    },
+    "reproduction": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["runners", "daughters", "seeds", "spores", "fragments", "none"]
+        },
+        "trigger": {
+          "type": "string",
+          "enum": ["mass", "age", "size", "stress"],
+          "description": "What event spawns offspring."
+        },
+        "trigger_threshold": { "type": "number" },
+        "offspring_distance_px_range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "max_density_per_100px2": { "type": "number", "description": "Self-thinning rule." }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_age_days_range": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "decay_rate_per_day": { "type": "number", "description": "Once dying, segments dissolve into detritus at this rate." },
+        "melt_on_water_change_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Crypt-melt mechanic. Sudden water change beyond this % triggers a melt event - all leaves dissolve but rhizome survives."
+        }
+      }
+    },
+    "appearance": {
+      "type": "object",
+      "description": "Palette indices (into the active biotope palette) for different segment kinds. Index ranges are 0-47.",
+      "required": ["leaf_palette_indices"],
+      "additionalProperties": false,
+      "properties": {
+        "leaf_palette_indices":  { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 } },
+        "stem_palette_indices":  { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 } },
+        "root_palette_indices":  { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 } },
+        "stress_palette_indices": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 }, "description": "Yellow/translucent ramp shown when starving." },
+        "dither_volume": { "type": "boolean", "default": true, "description": "Apply Bayer dither inside leaves for volume?" }
+      }
+    },
+    "tags": { "type": "array", "items": { "type": "string" } }
+  }
+}

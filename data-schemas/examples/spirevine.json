@@ -1,0 +1,55 @@
+{
+  "kind": "plant",
+  "id": "spirevine",
+  "display_name": "Spirevine",
+  "description": "Fast-growing stem plant. Goes leggy and bald at the base under low light. Player can trim tops and replant for a denser thicket - that's the intended interaction.",
+  "form": "stem",
+  "lsystem": {
+    "axiom": "S",
+    "rules": {
+      "S": "F[+lS][-lS]F[+l][-l]S",
+      "F": "F",
+      "l": "FL",
+      "L": "L"
+    },
+    "iterations": 5,
+    "step_length_px": 3,
+    "branch_angle_deg": 32,
+    "thickness_px": 1,
+    "phototropism": 0.95,
+    "flow_tolerance": 0.5
+  },
+  "needs": {
+    "light_min": 0.5,
+    "light_max": 1.0,
+    "co2_min": 3.0,
+    "nutrients": {
+      "ammonia":   0.0012,
+      "nitrate":   0.003,
+      "potassium": 0.002,
+      "iron":      0.00012,
+      "phosphate": 0.0004
+    },
+    "prefers_substrate": false
+  },
+  "reproduction": {
+    "mode": "fragments",
+    "trigger": "mass",
+    "trigger_threshold": 26,
+    "offspring_distance_px_range": [4, 12],
+    "max_density_per_100px2": 6
+  },
+  "lifecycle": {
+    "max_age_days_range": [90, 240],
+    "decay_rate_per_day": 0.08,
+    "melt_on_water_change_pct": 60
+  },
+  "appearance": {
+    "leaf_palette_indices":   [12, 13, 14, 15],
+    "stem_palette_indices":   [10, 11, 12],
+    "root_palette_indices":   [16, 17],
+    "stress_palette_indices": [13, 14, 34, 35],
+    "dither_volume": true
+  },
+  "tags": ["background", "fast-grower", "needs-trimming", "co2-hungry"]
+}

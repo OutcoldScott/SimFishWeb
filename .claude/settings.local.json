@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build *)",
+      "Bash(cargo run *)",
+      "Bash(wait %1)",
+      "Bash(kill 65834)",
+      "Bash(pkill -f \"examples/cycle\")",
+      "Bash(python3 validate.py)",
+      "Bash(python3 -m pip install --quiet jsonschema)",
+      "Bash(python3 -c \"from PIL import Image, ImageDraw; print\\('PIL ok'\\)\")",
+      "Bash(python3 render_preview.py)",
+      "Read(//Applications/**)",
+      "Read(//Applications/Godot.app/**)",
+      "Bash(brew list *)",
+      "Bash(godot --version)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --version)",
+      "Bash(python3 make_palette.py)",
+      "Bash(cp palettes/planted_48.png godot-project/palettes/planted_48.png)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --headless --import)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --headless --import)",
+      "Bash(timeout 6 /Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 120 main.tscn)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 180 main.tscn)",
+      "Bash(screencapture -x /Users/powerox/iAquarium/output/godot_running.png)",
+      "Bash(kill 97005)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project capture.tscn)",
+      "Bash(pkill -f \"main.tscn\")",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project main.tscn)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 200 main.tscn)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 1800 main.tscn)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 150 main.tscn)",
+      "Bash(pkill -f \"godot-project --remote-debug\")",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --path /Users/powerox/iAquarium/shaders-godot/godot-project --quit-after 3600 main.tscn)",
+      "Bash(pkill -f \"godot-project main\")"
+    ]
+  }
+}

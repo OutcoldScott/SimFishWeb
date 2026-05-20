@@ -1,0 +1,51 @@
+{
+  "kind": "fauna",
+  "id": "mudsifter",
+  "display_name": "Mudsifter",
+  "description": "Cory/loach-like bottom dweller. Pixel-shovels through substrate, kicking up detritus clouds. Mechanically important: stirs sand to prevent anaerobic pockets from forming.",
+  "category": "fish",
+  "morphology": {
+    "adult_length_px_range": [10, 14],
+    "shape": "bottom_dweller",
+    "fin_morphology": { "caudal": "spade", "dorsal_size": 0.4 }
+  },
+  "behavior": {
+    "water_layer": "bottom",
+    "schooling_min": 4,
+    "territorial": false,
+    "aggression": 0.05,
+    "cave_seeking": true,
+    "substrate_sift": true,
+    "algae_graze": false
+  },
+  "lifecycle": {
+    "lifespan_days_range": [1800, 3600],
+    "stages": { "egg": 0, "fry": 4, "juvenile": 45, "adult": 150, "senescent": 2700 },
+    "reproduction": {
+      "mode": "egg_layer_on_surface",
+      "clutch_size_range": [20, 60],
+      "needs_pair_bond": false,
+      "parental_care_days": 0,
+      "trigger": "cool_then_warm"
+    }
+  },
+  "diet": {
+    "preferred": ["pellet", "detritus", "frozen", "biofilm"],
+    "daily_food_pct_bodymass": 0.07,
+    "starvation_days": 14
+  },
+  "tolerances": {
+    "ph_range": [6.0, 7.6],
+    "temp_c_range": [21, 27],
+    "kh_range": [2, 10],
+    "nh3_lethal": 0.4,
+    "no2_lethal": 0.8
+  },
+  "appearance": {
+    "base_palette_indices": [19, 20, 21, 22],
+    "accent_palette_indices": [16, 17, 18, 33],
+    "pattern": "spots",
+    "sexual_dimorphism": false
+  },
+  "tags": ["bottom-dweller", "substrate-stirrer", "peaceful"]
+}

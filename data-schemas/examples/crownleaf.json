@@ -1,0 +1,54 @@
+{
+  "kind": "plant",
+  "id": "crownleaf",
+  "display_name": "Crownleaf",
+  "description": "Cryptocoryne-like rosette plant. Slow but tough in low light. Melts dramatically when water chemistry shifts suddenly - then regrows from the rhizome.",
+  "form": "rosette",
+  "lsystem": {
+    "axiom": "C",
+    "rules": {
+      "C": "[+++L][---L][+L][-L]C",
+      "L": "FFFlL",
+      "l": "lL"
+    },
+    "iterations": 4,
+    "step_length_px": 2,
+    "branch_angle_deg": 22,
+    "thickness_px": 2,
+    "phototropism": 0.4,
+    "flow_tolerance": 0.7
+  },
+  "needs": {
+    "light_min": 0.1,
+    "light_max": 0.7,
+    "co2_min": 0.5,
+    "nutrients": {
+      "ammonia":   0.0004,
+      "nitrate":   0.0008,
+      "potassium": 0.0006,
+      "iron":      0.00008,
+      "phosphate": 0.0001
+    },
+    "prefers_substrate": true
+  },
+  "reproduction": {
+    "mode": "daughters",
+    "trigger": "age",
+    "trigger_threshold": 90,
+    "offspring_distance_px_range": [3, 8],
+    "max_density_per_100px2": 2
+  },
+  "lifecycle": {
+    "max_age_days_range": [365, 1000],
+    "decay_rate_per_day": 0.02,
+    "melt_on_water_change_pct": 35
+  },
+  "appearance": {
+    "leaf_palette_indices":   [11, 12, 13],
+    "stem_palette_indices":   [9, 10],
+    "root_palette_indices":   [16, 17, 18],
+    "stress_palette_indices": [13, 14, 15, 35],
+    "dither_volume": true
+  },
+  "tags": ["midground", "low-light", "drama-queen"]
+}

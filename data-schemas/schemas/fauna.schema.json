@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vivarium.example/schemas/fauna.schema.json",
+  "title": "Fauna species (fish or invertebrate)",
+  "description": "Each fauna instance in the tank is a unique agent. This file defines the SPECIES - the ranges from which an individual's genome is drawn at spawn.",
+  "type": "object",
+  "required": ["kind", "id", "display_name", "category", "morphology", "behavior", "lifecycle", "diet", "appearance"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "fauna" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+    "display_name": { "type": "string" },
+    "description": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": ["fish", "shrimp", "snail", "worm", "crab"],
+      "description": "Coarse classification for UI grouping and predator/prey rules."
+    },
+
+    "morphology": {
+      "type": "object",
+      "required": ["adult_length_px_range", "shape"],
+      "additionalProperties": false,
+      "properties": {
+        "adult_length_px_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "shape": {
+          "type": "string",
+          "enum": ["torpedo", "compressed_oval", "elongate", "bottom_dweller", "snail_spiral", "snail_conical", "shrimp"],
+          "description": "Drives sprite construction + swim style."
+        },
+        "fin_morphology": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "caudal": { "type": "string", "enum": ["forked", "rounded", "lyre", "fan", "spade", "none"] },
+            "dorsal_size": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+
+    "behavior": {
+      "type": "object",
+      "required": ["water_layer", "schooling_min", "aggression"],
+      "additionalProperties": false,
+      "properties": {
+        "water_layer": {
+          "type": "string",
+          "enum": ["top", "mid", "bottom", "substrate", "all"],
+          "description": "Where this species naturally sits in the water column."
+        },
+        "schooling_min": { "type": "integer", "minimum": 0, "description": "Stress rises above 0.5 below this conspecific count." },
+        "territorial": { "type": "boolean", "default": false },
+        "territory_radius_px": { "type": "number" },
+        "aggression": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cave_seeking": { "type": "boolean", "default": false },
+        "substrate_sift": { "type": "boolean", "default": false, "description": "Stirs the top sand layer when foraging - has the side effect of preventing anaerobic pockets." },
+        "algae_graze": { "type": "boolean", "default": false }
+      }
+    },
+
+    "lifecycle": {
+      "type": "object",
+      "required": ["lifespan_days_range", "stages"],
+      "additionalProperties": false,
+      "properties": {
+        "lifespan_days_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "stages": {
+          "type": "object",
+          "description": "Day at which an individual transitions into this life stage.",
+          "additionalProperties": false,
+          "properties": {
+            "egg":         { "type": "number" },
+            "fry":         { "type": "number" },
+            "juvenile":    { "type": "number" },
+            "adult":       { "type": "number" },
+            "senescent":   { "type": "number" }
+          }
+        },
+        "reproduction": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["egg_scatter", "egg_layer_on_surface", "egg_burier", "livebearer", "mouthbrooder", "external_fertilization", "asexual_budding", "fragmentation"] },
+            "clutch_size_range": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+            "needs_pair_bond": { "type": "boolean", "default": false },
+            "parental_care_days": { "type": "number" },
+            "trigger": { "type": "string", "enum": ["clean_water", "rainfall_signal", "cool_then_warm", "high_food", "always"] }
+          }
+        }
+      }
+    },
+
+    "diet": {
+      "type": "object",
+      "required": ["preferred"],
+      "additionalProperties": false,
+      "properties": {
+        "preferred": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["pellet", "flake", "frozen", "live", "biofilm", "algae", "detritus", "plant_matter", "snails", "shrimp", "fish_fry"] }
+        },
+        "daily_food_pct_bodymass": { "type": "number", "default": 0.05 },
+        "starvation_days": { "type": "number", "default": 14 }
+      }
+    },
+
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ph_range":  { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "temp_c_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "kh_range":  { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+        "nh3_lethal":   { "type": "number", "default": 0.5 },
+        "no2_lethal":   { "type": "number", "default": 1.0 }
+      }
+    },
+
+    "appearance": {
+      "type": "object",
+      "required": ["base_palette_indices", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "base_palette_indices": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 }, "description": "Genome picks one." },
+        "accent_palette_indices": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 } },
+        "pattern": {
+          "type": "string",
+          "enum": ["solid", "vertical_bars", "horizontal_stripe", "spots", "reaction_diffusion", "gradient"],
+          "description": "How the accent palette is applied. reaction_diffusion = Turing pattern generated per-individual at spawn for uniqueness."
+        },
+        "sexual_dimorphism": { "type": "boolean", "default": false }
+      }
+    },
+
+    "tags": { "type": "array", "items": { "type": "string" } }
+  }
+}

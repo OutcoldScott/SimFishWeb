@@ -1,0 +1,114 @@
+# A single growing plant (one stem/blade).
+#
+# Each plant owns a chain of voxels stacked vertically. It grows over time when
+# given access to nutrients from the substrate grid below it. Fish can nibble
+# the top of the plant, removing voxels and gaining food. If a plant is reduced
+# to 0 voxels, it dies (queues itself for removal).
+
+extends Node3D
+class_name Plant
+
+const PLANT_RAMP: Array[Color] = [
+	Color8(16, 38, 20),
+	Color8(29, 59, 34),
+	Color8(44, 90, 48),
+	Color8(62, 127, 64),
+	Color8(87, 162, 83),
+	Color8(121, 192, 105),
+]
+const VOXEL_SIZE: float = 0.32
+
+# Per-plant params (set on spawn).
+var max_height: int = 22
+var growth_rate: float = 0.18  # voxels per second at saturated nutrients
+var nutrient_demand: float = 0.05  # nutrients consumed per voxel grown
+var sway_amplitude: float = 0.25
+
+var current_height: int = 0
+var growth_progress: float = 0.0
+var voxels: Array[MeshInstance3D] = []
+var _phase: float = 0.0
+var _t: float = 0.0
+var _world_pos: Vector3 = Vector3.ZERO
+
+
+func init(initial_height: int = 1, params: Dictionary = {}) -> void:
+	max_height = params.get("max_height", max_height)
+	growth_rate = params.get("growth_rate", growth_rate)
+	nutrient_demand = params.get("nutrient_demand", nutrient_demand)
+	sway_amplitude = params.get("sway_amplitude", sway_amplitude)
+	for i in initial_height:
+		_grow_one()
+
+
+func _ready() -> void:
+	_phase = float(get_instance_id() % 1000) * 0.013
+	_world_pos = global_position
+
+
+func _grow_one() -> bool:
+	if current_height >= max_height:
+		return false
+	var rel: float = float(current_height) / float(maxi(1, max_height - 1))
+	var ramp_idx: int = clampi(int(rel * 5.0), 0, 5)
+	var color: Color = PLANT_RAMP[ramp_idx]
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
+	mi.mesh = bm
+	mi.material_override = VoxelMat.make(color)
+	# Stack the new voxel on top, with a small lateral offset that curves
+	# the blade as it grows.
+	var lat: float = sin(rel * PI * 0.6) * sway_amplitude * 0.6
+	mi.position = Vector3(lat, current_height * VOXEL_SIZE + VOXEL_SIZE * 0.5, 0)
+	add_child(mi)
+	voxels.append(mi)
+	current_height += 1
+	return true
+
+
+func biomass() -> int:
+	return current_height
+
+
+# Called by SimDriver each tick.
+func tick(dt: float, substrate: SubstrateGrid) -> void:
+	_t += dt
+	# Sway the whole blade based on phase.
+	rotation.z = sin(_t * 0.7 + _phase) * 0.08
+
+	if current_height >= max_height:
+		return
+
+	var available: float = substrate.get_at(_world_pos)
+	# Map nutrient (0..NUTRIENT_MAX) to growth multiplier.
+	var nutrient_mult: float = clampf((available - substrate.NUTRIENT_BASELINE) / 1.0, 0.0, 1.0)
+	var effective_rate: float = growth_rate * (0.2 + 0.8 * nutrient_mult)
+	growth_progress += effective_rate * dt
+	if growth_progress >= 1.0:
+		growth_progress = 0.0
+		if _grow_one():
+			substrate.consume_at(_world_pos, nutrient_demand)
+
+
+# Fish nibbling: remove up to `amount` voxels from the top. Returns the
+# number removed (= food value the fish gained).
+func nibble(amount: int) -> int:
+	var removed: int = 0
+	for i in amount:
+		if voxels.is_empty():
+			break
+		var v: MeshInstance3D = voxels.pop_back()
+		v.queue_free()
+		current_height -= 1
+		removed += 1
+		# Reset growth progress so the regrow doesn't snap a new voxel in instantly.
+		growth_progress = 0.0
+	if current_height <= 0:
+		queue_free()
+	return removed
+
+
+# Quick world-space height of the top voxel (for fish to target nibbling).
+func top_world_y() -> float:
+	return global_position.y + current_height * VOXEL_SIZE

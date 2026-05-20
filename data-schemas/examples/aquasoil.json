@@ -1,0 +1,32 @@
+{
+  "kind": "substrate",
+  "id": "aquasoil",
+  "display_name": "Aquasoil",
+  "description": "Baked clay-based planted-tank substrate. High CEC, drops pH, leaches ammonia for ~2 weeks then settles. The 'engine' substrate.",
+  "category": "substrate",
+  "chemistry": {
+    "bacterial_capacity": 2.0,
+    "cec": 1.0,
+    "anaerobic_susceptibility": 0.6,
+    "leaches": {
+      "ammonia": 0.0008,
+      "iron": 0.00005,
+      "potassium": 0.0002
+    },
+    "leach_decay_days": 14,
+    "buffers": {
+      "ph": -0.5,
+      "kh": -0.2
+    }
+  },
+  "physics": {
+    "is_solid": false,
+    "angle_of_repose_deg": 36,
+    "compaction_rate": 0.05
+  },
+  "appearance": {
+    "palette_indices": [16, 17, 18, 19, 20, 21],
+    "grain_size_px": 1
+  },
+  "tags": ["planted", "nutritious", "buffering"]
+}

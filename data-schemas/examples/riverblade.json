@@ -1,0 +1,54 @@
+{
+  "kind": "plant",
+  "id": "riverblade",
+  "display_name": "Riverblade",
+  "description": "Vallisneria-like tall ribbon plant. Reproduces by underground runners - forms forests over weeks in a corner with low flow.",
+  "form": "rosette",
+  "lsystem": {
+    "axiom": "[B][B][B]",
+    "rules": {
+      "B": "FFFFL",
+      "F": "F",
+      "L": "L"
+    },
+    "iterations": 6,
+    "step_length_px": 2,
+    "branch_angle_deg": 8,
+    "thickness_px": 1,
+    "phototropism": 0.85,
+    "flow_tolerance": 0.9
+  },
+  "needs": {
+    "light_min": 0.25,
+    "light_max": 0.95,
+    "co2_min": 1.0,
+    "nutrients": {
+      "ammonia":   0.0008,
+      "nitrate":   0.002,
+      "potassium": 0.001,
+      "iron":      0.00005,
+      "phosphate": 0.0002
+    },
+    "prefers_substrate": true
+  },
+  "reproduction": {
+    "mode": "runners",
+    "trigger": "mass",
+    "trigger_threshold": 18,
+    "offspring_distance_px_range": [10, 24],
+    "max_density_per_100px2": 4
+  },
+  "lifecycle": {
+    "max_age_days_range": [180, 540],
+    "decay_rate_per_day": 0.04,
+    "melt_on_water_change_pct": 80
+  },
+  "appearance": {
+    "leaf_palette_indices":   [10, 11, 12, 13, 14],
+    "stem_palette_indices":   [9, 10, 11],
+    "root_palette_indices":   [16, 17],
+    "stress_palette_indices": [13, 14, 15],
+    "dither_volume": true
+  },
+  "tags": ["background", "easy", "forest-forming"]
+}

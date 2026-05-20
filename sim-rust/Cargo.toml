@@ -1,0 +1,25 @@
+[package]
+name = "vivarium-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Vivarium core simulation: substrate falling-sand + water chemistry + nitrogen cycle."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rand_xoshiro = "0.6"
+
+[dev-dependencies]
+# nothing extra; examples use std.
+
+[lib]
+name = "vivarium_sim"
+path = "src/lib.rs"
+
+[[example]]
+name = "cycle"
+path = "examples/cycle.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

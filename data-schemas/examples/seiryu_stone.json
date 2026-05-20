@@ -1,0 +1,24 @@
+{
+  "kind": "substrate",
+  "id": "seiryu_stone",
+  "display_name": "Seiryu stone",
+  "description": "Sharp-featured limestone. Beautiful for iwagumi layouts but raises KH and pH over weeks - not for soft-water biotopes.",
+  "category": "stone",
+  "chemistry": {
+    "bacterial_capacity": 0.7,
+    "anaerobic_susceptibility": 0.0,
+    "buffers": {
+      "ph": 0.4,
+      "kh": 2.0
+    }
+  },
+  "physics": {
+    "is_solid": true,
+    "angle_of_repose_deg": 70
+  },
+  "appearance": {
+    "palette_indices": [25, 26, 27, 28, 29],
+    "hardscape_silhouette": "art/hardscape/seiryu_silhouettes.png"
+  },
+  "tags": ["hardscape", "iwagumi", "buffering_up"]
+}

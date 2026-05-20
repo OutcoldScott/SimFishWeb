@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vivarium.example/schemas/substrate.schema.json",
+  "title": "Substrate or hardscape kind",
+  "description": "Defines a substance the player can place: substrates (sand, soil, gravel) and hardscape (rocks, driftwood, sticks). Hardscape kinds are 'solid' and don't fall.",
+  "type": "object",
+  "required": ["kind", "id", "display_name", "category", "chemistry", "physics", "appearance"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "substrate" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+    "display_name": { "type": "string" },
+    "description": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": ["substrate", "stone", "driftwood", "leaf", "stick", "decor"]
+    },
+
+    "chemistry": {
+      "type": "object",
+      "required": ["bacterial_capacity", "anaerobic_susceptibility"],
+      "additionalProperties": false,
+      "properties": {
+        "bacterial_capacity": { "type": "number", "minimum": 0, "description": "Multiplier on bacterial colony size per cell. Lava rock high (~4.0), sand low (~1.0)." },
+        "cec": { "type": "number", "minimum": 0, "default": 0, "description": "Cation exchange capacity. Aquasoil ~1.0, gravel 0." },
+        "anaerobic_susceptibility": { "type": "number", "minimum": 0, "maximum": 1, "description": "How readily this kind goes anaerobic when buried + still." },
+        "leaches": {
+          "type": "object",
+          "description": "Per-tick release rate of these species into adjacent water, scaled by remaining stock.",
+          "additionalProperties": { "type": "number" }
+        },
+        "leach_decay_days": { "type": "number", "description": "How long until leaching falls to 50% (e.g. aquasoil ammonia stops after ~14 days)." },
+        "buffers": {
+          "type": "object",
+          "description": "Long-term shifts in derived water parameters.",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    },
+
+    "physics": {
+      "type": "object",
+      "required": ["is_solid"],
+      "additionalProperties": false,
+      "properties": {
+        "is_solid": { "type": "boolean", "description": "True for hardscape (rocks, driftwood). They never fall." },
+        "angle_of_repose_deg": { "type": "number", "minimum": 0, "maximum": 90, "description": "Loose substrate slip angle. Sand low (~30), gravel high (~45)." },
+        "compaction_rate": { "type": "number", "default": 0.05 },
+        "decomposes": { "type": "boolean", "default": false, "description": "Sticks/leaves decompose into detritus + tannins." },
+        "decompose_days": { "type": "number" }
+      }
+    },
+
+    "appearance": {
+      "type": "object",
+      "required": ["palette_indices"],
+      "additionalProperties": false,
+      "properties": {
+        "palette_indices": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 47 }, "description": "Ramp from darkest to lightest. Compaction picks darker indices; surface picks lighter." },
+        "grain_size_px": { "type": "integer", "minimum": 1, "maximum": 3, "default": 1 },
+        "hardscape_silhouette": { "type": "string", "description": "Path to a sprite for hardscape kinds. Ignored for substrates." }
+      }
+    },
+
+    "tags": { "type": "array", "items": { "type": "string" } }
+  }
+}

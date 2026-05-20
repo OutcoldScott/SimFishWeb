@@ -1,0 +1,50 @@
+{
+  "kind": "fauna",
+  "id": "spiralsnail",
+  "display_name": "Spiralsnail",
+  "description": "Ramshorn-like grazer (the small dark spirals on your real tank's glass). Eats biofilm, dead plant matter, and surplus food. Population is a leading indicator: rapid bloom = you're overfeeding.",
+  "category": "snail",
+  "morphology": {
+    "adult_length_px_range": [3, 5],
+    "shape": "snail_spiral"
+  },
+  "behavior": {
+    "water_layer": "all",
+    "schooling_min": 0,
+    "territorial": false,
+    "aggression": 0.0,
+    "cave_seeking": false,
+    "substrate_sift": false,
+    "algae_graze": true
+  },
+  "lifecycle": {
+    "lifespan_days_range": [180, 540],
+    "stages": { "egg": 0, "fry": 7, "juvenile": 21, "adult": 60, "senescent": 360 },
+    "reproduction": {
+      "mode": "egg_layer_on_surface",
+      "clutch_size_range": [6, 20],
+      "needs_pair_bond": false,
+      "parental_care_days": 0,
+      "trigger": "high_food"
+    }
+  },
+  "diet": {
+    "preferred": ["biofilm", "algae", "detritus", "plant_matter"],
+    "daily_food_pct_bodymass": 0.04,
+    "starvation_days": 30
+  },
+  "tolerances": {
+    "ph_range": [6.5, 8.4],
+    "temp_c_range": [15, 30],
+    "kh_range": [2, 20],
+    "nh3_lethal": 1.5,
+    "no2_lethal": 3.0
+  },
+  "appearance": {
+    "base_palette_indices": [33, 34, 18, 19],
+    "accent_palette_indices": [16, 17, 24, 25],
+    "pattern": "solid",
+    "sexual_dimorphism": false
+  },
+  "tags": ["cleanup-crew", "indicator-species", "breeds-on-food"]
+}

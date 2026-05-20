@@ -1,0 +1,22 @@
+{
+  "kind": "substrate",
+  "id": "lava_rock",
+  "display_name": "Lava rock",
+  "description": "Porous volcanic rock - the bio-battery. Hosts roughly 4x more bacterial colonies than typical substrate per cell.",
+  "category": "stone",
+  "chemistry": {
+    "bacterial_capacity": 4.0,
+    "cec": 0.25,
+    "anaerobic_susceptibility": 0.1
+  },
+  "physics": {
+    "is_solid": true,
+    "angle_of_repose_deg": 60
+  },
+  "appearance": {
+    "palette_indices": [24, 25, 26, 27],
+    "grain_size_px": 2,
+    "hardscape_silhouette": "art/hardscape/lava_rock_silhouettes.png"
+  },
+  "tags": ["hardscape", "bio-media", "porous"]
+}
