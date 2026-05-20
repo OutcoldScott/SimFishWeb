@@ -675,9 +675,10 @@ func _spawn_fish_at(genome: Dictionary, pos: Vector3) -> void:
 	# generations from frame zero rather than synchronised crashes.
 	var lifespan: float = genome.get("max_age_s", 240.0)
 	f.age = randf_range(0.15, 0.65) * lifespan
-	# Apex species (e.g. betta) can grow much bigger than schooling species.
+	# Apex species (e.g. betta) can grow bigger than schooling species but
+	# not tank-monster huge.
 	if genome.get("species", "") == "betta":
-		f.max_growth = 3.5
+		f.max_growth = 2.0
 	fauna_root.add_child(f)
 	f.global_position = pos
 	f.init_genome(genome)

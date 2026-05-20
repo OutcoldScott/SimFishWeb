@@ -67,7 +67,7 @@ var burst_remaining: float = 0.0
 # size; chronically hungry ones shrink. effective_size() is the property
 # used for size-based predation (bigger fish hunt smaller ones).
 var growth_factor: float = 1.0
-var max_growth: float = 1.8     # apex species (betta) override to ~3.5
+var max_growth: float = 1.4     # apex species (betta) override higher (~2.0)
 
 
 func effective_size() -> float:
@@ -496,10 +496,12 @@ func tick(dt: float, neighbors: Array, plants: Array, waste: Array,
 				return events
 
 	# Tier 3: SEEK PARTNER. Adult, well-fed, not on cooldown, no current
-	# partner. Also gated by a global fish population cap so 200+ fish don't
-	# bloom out and crash the ecosystem.
-	const FISH_POPULATION_CAP: int = 45
-	var current_fish_pop: int = sim.fish.size() if sim != null else 0
+	# partner. Cap includes eggs-in-flight (otherwise the 30s incubation
+	# pipeline overflows the cap by a factor of 4-5x).
+	const FISH_POPULATION_CAP: int = 35
+	var current_fish_pop: int = 0
+	if sim != null:
+		current_fish_pop = sim.fish.size() + sim.eggs.size()
 	if maturity == MATURITY_ADULT and breed_cooldown <= 0.0 and partner == null \
 			and hunger < 0.5 and energy > 0.65 and stress < 0.4 \
 			and current_fish_pop < FISH_POPULATION_CAP:
