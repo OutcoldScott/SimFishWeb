@@ -296,19 +296,30 @@ func _hatch(e: FishEgg) -> void:
 
 
 func _emit_stats() -> void:
+	# Re-filter here: _emit_stats runs at 1Hz, independent of the 10Hz _tick
+	# filter. Between two _tick calls, the engine may actually delete a
+	# queue_freed Fish/Plant; the array still holds the stale ref. Iterating
+	# without is_instance_valid causes "previously freed" crashes after long
+	# runs with high mortality.
 	var total_biomass: int = 0
 	var n_adults: int = 0
 	var n_fry: int = 0
 	for f in fish:
+		if not is_instance_valid(f):
+			continue
 		if f.maturity == Fish.MATURITY_ADULT:
 			n_adults += 1
 		elif f.maturity == Fish.MATURITY_FRY:
 			n_fry += 1
 	for p in plants:
+		if not is_instance_valid(p):
+			continue
 		total_biomass += p.biomass()
 	var shrimp_adults: int = 0
 	var shrimp_fry: int = 0
 	for sh in shrimp:
+		if not is_instance_valid(sh):
+			continue
 		if sh.maturity == Shrimp.MATURITY_ADULT:
 			shrimp_adults += 1
 		elif sh.maturity == Shrimp.MATURITY_FRY:
