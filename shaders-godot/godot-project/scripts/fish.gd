@@ -89,6 +89,10 @@ var target_velocity: Vector3 = Vector3.ZERO
 var _bank_pivot: Node3D = null
 var _tail_pivot: Node3D = null
 var _body_mid_pivot: Node3D = null
+var _dorsal_pivot: Node3D = null
+var _pec_left_pivot: Node3D = null
+var _pec_right_pivot: Node3D = null
+var _anal_pivot: Node3D = null
 var _swim_phase: float = 0.0
 var _last_yaw: float = 0.0
 var _bank: float = 0.0
@@ -217,18 +221,35 @@ func _build_body() -> void:
 			Vector3(v * 0.15, v * 0.35, v * 0.9), mat_accent)
 		_add_voxel_to(_body_mid_pivot, Vector3(-v * 0.5, 0, i * v),
 			Vector3(v * 0.15, v * 0.35, v * 0.9), mat_accent)
-	# Dorsal fin (top).
-	_add_voxel_to(_body_mid_pivot, Vector3(0, v * 0.95, v * 1.0),
+	# Dorsal fin (top) - pivoted at its base so it can sway lazily.
+	_dorsal_pivot = Node3D.new()
+	_dorsal_pivot.name = "DorsalPivot"
+	_dorsal_pivot.position = Vector3(0, v * 0.75, v * 1.0)
+	_body_mid_pivot.add_child(_dorsal_pivot)
+	_add_voxel_to(_dorsal_pivot, Vector3(0, v * 0.2, 0),
 		Vector3(v * 0.15, v * 0.4, v * 1.2), mat_fin)
-	_add_voxel_to(_body_mid_pivot, Vector3(0, v * 1.2, v * 1.2),
+	_add_voxel_to(_dorsal_pivot, Vector3(0, v * 0.45, v * 0.2),
 		Vector3(v * 0.12, v * 0.25, v * 0.6), mat_fin)
-	# Anal fin (bottom).
-	_add_voxel_to(_body_mid_pivot, Vector3(0, -v * 0.85, v * 1.6),
+	# Anal fin (bottom) - smaller mirror of dorsal, also pivoted.
+	_anal_pivot = Node3D.new()
+	_anal_pivot.name = "AnalPivot"
+	_anal_pivot.position = Vector3(0, -v * 0.65, v * 1.6)
+	_body_mid_pivot.add_child(_anal_pivot)
+	_add_voxel_to(_anal_pivot, Vector3(0, -v * 0.2, 0),
 		Vector3(v * 0.12, v * 0.35, v * 0.7), mat_fin)
-	# Pectoral fins (sides, just behind head).
-	_add_voxel_to(_body_mid_pivot, Vector3(v * 0.6, -v * 0.1, v * 0.2),
+	# Pectoral fins on both sides - each gets its own pivot so they can
+	# flutter independently like a real fish's hovering stroke.
+	_pec_right_pivot = Node3D.new()
+	_pec_right_pivot.name = "PecRight"
+	_pec_right_pivot.position = Vector3(v * 0.55, -v * 0.1, v * 0.2)
+	_body_mid_pivot.add_child(_pec_right_pivot)
+	_add_voxel_to(_pec_right_pivot, Vector3(v * 0.1, 0, 0),
 		Vector3(v * 0.12, v * 0.25, v * 0.5), mat_fin)
-	_add_voxel_to(_body_mid_pivot, Vector3(-v * 0.6, -v * 0.1, v * 0.2),
+	_pec_left_pivot = Node3D.new()
+	_pec_left_pivot.name = "PecLeft"
+	_pec_left_pivot.position = Vector3(-v * 0.55, -v * 0.1, v * 0.2)
+	_body_mid_pivot.add_child(_pec_left_pivot)
+	_add_voxel_to(_pec_left_pivot, Vector3(-v * 0.1, 0, 0),
 		Vector3(v * 0.12, v * 0.25, v * 0.5), mat_fin)
 
 	# ---- TAIL (strong wag) - tail base at the rear of the body ----
@@ -629,14 +650,32 @@ func _process(dt: float) -> void:
 	if _bank_pivot != null:
 		_bank_pivot.rotation.z = _bank
 
-	# ---- Swim animation: tail wag scales with speed ----
-	# Hovering fish pulse slowly, dashing fish whip fast.
+	# ---- Swim animation ----
+	# Tail wag scales with speed. Hovering fish pulse slowly, dashing fast.
+	# Independent fin pivots add full-body life: pectoral fins flutter at a
+	# faster frequency offset by 90 degrees for left/right (rowing motion),
+	# dorsal/anal fins sway gently with the body's counter-wag.
 	var wag_freq: float = 2.5 + speed * 5.5
 	_swim_phase += dt * wag_freq
 	if _tail_pivot != null:
 		_tail_pivot.rotation.y = sin(_swim_phase) * (0.35 + minf(speed * 0.18, 0.25))
 	if _body_mid_pivot != null:
 		_body_mid_pivot.rotation.y = -sin(_swim_phase) * 0.10
+	# Dorsal: small sway with the body counter-wag, faster small flutter on top.
+	if _dorsal_pivot != null:
+		_dorsal_pivot.rotation.x = sin(_swim_phase * 1.3) * 0.08
+		_dorsal_pivot.rotation.z = -sin(_swim_phase) * 0.05
+	if _anal_pivot != null:
+		_anal_pivot.rotation.x = -sin(_swim_phase * 1.3) * 0.10
+	# Pectoral fins: faster rowing flutter. Each side offset by PI/2 so the
+	# motion looks like a continuous paddle, more visible at low speeds when
+	# the fish is hovering (real fish use pectorals to hover/brake).
+	var pec_freq: float = 4.5 + speed * 3.0
+	var pec_amp: float = 0.45 - minf(speed * 0.12, 0.30)
+	if _pec_right_pivot != null:
+		_pec_right_pivot.rotation.z = sin(_swim_phase * pec_freq / wag_freq) * pec_amp
+	if _pec_left_pivot != null:
+		_pec_left_pivot.rotation.z = -sin(_swim_phase * pec_freq / wag_freq + PI * 0.5) * pec_amp
 
 
 func _update_maturity() -> void:

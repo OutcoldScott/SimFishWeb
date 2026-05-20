@@ -486,6 +486,33 @@ func _spawn_initial_plants() -> void:
 			_spawn_plant(species_specs[4], Vector3(x + off.x, arc_y, off.z),
 				_rng.randi_range(1, 2))
 
+	# --- Branching ferns: 8 scattered, each grows into a small tree shape
+	# via L-system side branches. Visible mathematical structure.
+	var fern_ramp: Array = [
+		Color8(20, 50, 28), Color8(34, 78, 42), Color8(52, 110, 60),
+		Color8(76, 142, 82), Color8(108, 175, 110), Color8(150, 210, 145),
+	]
+	for i in 8:
+		var bp := BranchPlant.new()
+		plants_root.add_child(bp)
+		bp.global_position = Vector3(
+			_rng.randf_range(-TANK_HALF_W * 0.85, TANK_HALF_W * 0.85),
+			SUBSTRATE_DEPTH,
+			_rng.randf_range(-TANK_HALF_D * 0.85, TANK_HALF_D * 0.7),
+		)
+		bp.ramp_override = fern_ramp
+		bp.water_surface_y = WATER_HEIGHT
+		bp.generation = 0
+		bp.branch_chance = _rng.randf_range(0.3, 0.45)
+		bp.branch_interval = _rng.randi_range(2, 4)
+		bp.branch_angle_deg = _rng.randf_range(28.0, 45.0)
+		bp.init(_rng.randi_range(2, 4), {
+			"max_height": _rng.randi_range(10, 16),
+			"growth_rate": 0.16,
+			"sway_amplitude": 0.18,
+		})
+		sim.register_plant(bp)
+
 
 func _spawn_plant(spec: Dictionary, pos: Vector3, initial_height: int) -> void:
 	var p := Plant.new()
@@ -677,24 +704,27 @@ func _spawn_surface_ripples() -> void:
 
 
 func _spawn_bubble_streams() -> void:
-	# 3-4 randomly placed anaerobic-pocket bubble streams. Each is a
-	# GPUParticles3D that drifts bubbles up to the surface. They run slowly
-	# and add ambient life to the tank.
+	# 3-4 anaerobic bubble streams. Each rises bubbles to the meniscus, then
+	# a paired pop-ripple emitter spawns small expanding rings at the surface
+	# directly above. Bubble lifetime is tuned so the visual disappear lines
+	# up with the surface depth.
 	var n_streams: int = _rng.randi_range(3, 5)
 	var container := Node3D.new()
 	container.name = "BubbleStreams"
 	add_child(container)
 	for i in n_streams:
+		var sx: float = _rng.randf_range(-TANK_HALF_W * 0.85, TANK_HALF_W * 0.85)
+		var sz: float = _rng.randf_range(-TANK_HALF_D * 0.85, TANK_HALF_D * 0.85)
+		# --- Rising bubbles from the substrate ---
 		var p := GPUParticles3D.new()
 		p.amount = 6
-		p.lifetime = 5.0
-		p.preprocess = 2.0
+		# Tune lifetime so a bubble rises ~from substrate to surface.
+		# bubble_speed (~0.6) * lifetime = distance, want ~(WATER_HEIGHT-SUBSTRATE)
+		var rise_distance: float = WATER_HEIGHT - SUBSTRATE_DEPTH
+		p.lifetime = clampf(rise_distance / 1.3, 2.5, 6.0)
+		p.preprocess = p.lifetime * 0.5
 		p.local_coords = false
-		p.position = Vector3(
-			_rng.randf_range(-TANK_HALF_W * 0.85, TANK_HALF_W * 0.85),
-			SUBSTRATE_DEPTH + 0.1,
-			_rng.randf_range(-TANK_HALF_D * 0.85, TANK_HALF_D * 0.85),
-		)
+		p.position = Vector3(sx, SUBSTRATE_DEPTH + 0.1, sz)
 		var pm := ParticleProcessMaterial.new()
 		pm.direction = Vector3(0, 1, 0)
 		pm.initial_velocity_min = 0.4
@@ -714,6 +744,68 @@ func _spawn_bubble_streams() -> void:
 		bm.material = VoxelMat.make(Color8(200, 230, 235))
 		p.draw_pass_1 = bm
 		container.add_child(p)
+
+		# --- Pop ripples at the surface directly above ---
+		_spawn_surface_pop_emitter(container, Vector3(sx, WATER_HEIGHT - 0.05, sz),
+			p.lifetime, p.amount)
+
+
+# Spawn a tiny ring-of-flat-voxels particle emitter at the surface position.
+# Roughly aligns with where the corresponding bubble stream's bubbles will
+# pop. Visible as little expanding pale squares that fade out, suggesting
+# a ring spreading from the pop.
+func _spawn_surface_pop_emitter(parent: Node, pos: Vector3, bubble_lifetime: float,
+		bubble_amount: int) -> void:
+	var ring := GPUParticles3D.new()
+	ring.amount = bubble_amount
+	ring.lifetime = 0.55
+	ring.local_coords = false
+	# Stagger emission to match bubble cadence approximately.
+	ring.speed_scale = 1.0
+	ring.explosiveness = 0.0
+	ring.position = pos
+	# Sync the emission rate to the bubble lifetime so we get ~one pop per
+	# bubble. amount / lifetime = emission rate.
+	ring.lifetime = 0.55
+	# Use a delay matching the bubble's transit time so pops happen after a
+	# bubble would have actually arrived.
+	ring.preprocess = bubble_lifetime
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3.ZERO
+	pm.initial_velocity_min = 0.0
+	pm.initial_velocity_max = 0.0
+	pm.gravity = Vector3.ZERO
+	pm.spread = 0.0
+	pm.scale_min = 0.4
+	pm.scale_max = 1.0
+	# Each pop scales up over its lifetime - looks like a spreading ring.
+	var scale_curve := Curve.new()
+	scale_curve.add_point(Vector2(0.0, 0.2))
+	scale_curve.add_point(Vector2(0.4, 1.0))
+	scale_curve.add_point(Vector2(1.0, 1.4))
+	var scale_tex := CurveTexture.new()
+	scale_tex.curve = scale_curve
+	pm.scale_curve = scale_tex
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(0.05, 0.0, 0.05)
+	# Fade out via color ramp at end of lifetime.
+	var alpha_curve := Curve.new()
+	alpha_curve.add_point(Vector2(0.0, 1.0))
+	alpha_curve.add_point(Vector2(0.7, 0.7))
+	alpha_curve.add_point(Vector2(1.0, 0.0))
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.95, 0.99, 1.0, 1.0))
+	grad.set_color(1, Color(0.95, 0.99, 1.0, 0.0))
+	var grad_tex := GradientTexture1D.new()
+	grad_tex.gradient = grad
+	pm.color_ramp = grad_tex
+	ring.process_material = pm
+	# Flat ring mesh - just a thin box that scales up.
+	var rm := BoxMesh.new()
+	rm.size = Vector3(0.55, 0.04, 0.55)
+	rm.material = VoxelMat.make(Color8(220, 235, 240))
+	ring.draw_pass_1 = rm
+	parent.add_child(ring)
 
 
 func _spawn_mulm_layer() -> void:
