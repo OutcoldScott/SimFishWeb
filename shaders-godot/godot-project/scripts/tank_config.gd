@@ -26,6 +26,17 @@ var light_yaw: float = 0.5
 var light_pitch: float = 0.3
 # light_color shifts warm/cool: 0 = cool blue daylight, 1 = warm tungsten
 var light_warmth: float = 0.6
+# Visible aquarium fixture above the tank. Two physical layouts:
+#   "bar"       - long horizontal LED bar spanning ~80% of tank width.
+#                 Casts a wide focused beam down via multiple spots.
+#   "spotlight" - single circular pendant fixture, narrower beam.
+var light_fixture: String = "bar"
+# Height of the fixture above the water surface (1.0 = level with tank top).
+var light_height: float = 1.4
+# Size of the fixture as a fraction of tank width.
+var light_size: float = 0.75
+# Show volumetric beams (god rays). Off can save a bit of GPU.
+var light_volumetric: bool = true
 
 # ---- Substrate ----
 # Four substrate "types" with different fertility characteristics. Each
@@ -94,6 +105,10 @@ func save_to_disk() -> void:
 	cfg.set_value("light", "yaw", light_yaw)
 	cfg.set_value("light", "pitch", light_pitch)
 	cfg.set_value("light", "warmth", light_warmth)
+	cfg.set_value("light", "fixture", light_fixture)
+	cfg.set_value("light", "height", light_height)
+	cfg.set_value("light", "size", light_size)
+	cfg.set_value("light", "volumetric", light_volumetric)
 	cfg.set_value("substrate", "type", substrate_type)
 	cfg.save(SAVE_PATH)
 
@@ -110,6 +125,10 @@ func load_from_disk() -> void:
 	light_yaw = cfg.get_value("light", "yaw", light_yaw)
 	light_pitch = cfg.get_value("light", "pitch", light_pitch)
 	light_warmth = cfg.get_value("light", "warmth", light_warmth)
+	light_fixture = cfg.get_value("light", "fixture", light_fixture)
+	light_height = cfg.get_value("light", "height", light_height)
+	light_size = cfg.get_value("light", "size", light_size)
+	light_volumetric = cfg.get_value("light", "volumetric", light_volumetric)
 	substrate_type = cfg.get_value("substrate", "type", substrate_type)
 
 

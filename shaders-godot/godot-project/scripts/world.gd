@@ -116,6 +116,7 @@ func _ready() -> void:
 	_build_glass()
 	_build_snails()  # static decor
 
+	_build_light_fixture()
 	_spawn_initial_plants()
 	_spawn_floaters()
 	_spawn_initial_fish()
@@ -132,6 +133,11 @@ func _ready() -> void:
 	# Find the directional light so we can dim it on the day/night cycle.
 	# The light is a sibling under SubViewport/World, accessible by name.
 	_directional_light = get_parent().get_node_or_null("DirectionalLight3D")
+
+	# Toggle volumetric beams based on TankConfig.light_volumetric.
+	var we := get_parent().get_node_or_null("WorldEnvironment")
+	if we != null and we.environment != null and cfg != null:
+		we.environment.volumetric_fog_enabled = bool(cfg.light_volumetric)
 
 	print("[vivarium] world built: ", get_child_count(), " top-level nodes; ",
 		  sim.fish.size(), " fish, ", sim.shrimp.size(), " shrimp, ",
@@ -156,30 +162,30 @@ func _process(dt: float) -> void:
 		tinted.a = 0.10 + tannins * 0.10
 		_water_material_ref.albedo_color = tinted
 
-	# Day/night light cycle: directional energy + ambient mod.
-	# Energy is modulated by TankConfig.light_energy (user-adjustable),
-	# direction by light_yaw + light_pitch, color by light_warmth.
-	if _directional_light != null and sim != null:
+	# Day/night light cycle. The DirectionalLight gives soft ambient room
+	# light; the SpotLight3Ds in the fixture give the focused aquarium beam.
+	# Both are dimmed by the day/night cycle.
+	if sim != null:
 		var dl: float = sim.daylight()
 		var cfg2 := get_node_or_null("/root/TankConfig")
 		var max_energy: float = 0.5
+		var warmth: float = 0.6
 		if cfg2 != null:
 			max_energy = float(cfg2.light_energy)
-			# Position the light on a unit sphere above the tank, then orient
-			# it at the tank center. Yaw is rotation around Y, pitch is angle
-			# above horizontal (0 = top-down, 1 = horizontal).
-			var yaw_rad: float = float(cfg2.light_yaw) * TAU
-			var pitch_rad: float = lerpf(PI / 2.0, 0.05, float(cfg2.light_pitch))
-			var dist: float = maxf(TANK_HEIGHT, TANK_HALF_W * 1.2) * 1.5
-			var x: float = sin(yaw_rad) * cos(pitch_rad) * dist
-			var z: float = cos(yaw_rad) * cos(pitch_rad) * dist
-			var y: float = sin(pitch_rad) * dist + TANK_HEIGHT * 0.5
-			_directional_light.global_position = Vector3(x, y, z)
-			_directional_light.look_at(Vector3(0, TANK_HEIGHT * 0.4, 0), Vector3.UP)
-			var warmth: float = float(cfg2.light_warmth)
-			_directional_light.light_color = Color(0.55, 0.65, 0.95).lerp(
-				Color(1.0, 0.95, 0.80), warmth)
-		_directional_light.light_energy = 0.05 + dl * max_energy
+			warmth = float(cfg2.light_warmth)
+		var beam_color: Color = Color(0.55, 0.65, 0.95).lerp(
+			Color(1.0, 0.95, 0.80), warmth)
+		# Ambient room light: low energy, broad.
+		if _directional_light != null:
+			_directional_light.light_color = beam_color
+			_directional_light.light_energy = 0.05 + dl * (max_energy * 0.45)
+		# Fixture spot lights: strong focused beam.
+		var spot_energy: float = 0.4 + dl * (max_energy * 6.0)
+		for spot in _light_fixture_spots:
+			if not is_instance_valid(spot):
+				continue
+			spot.light_color = beam_color
+			spot.light_energy = spot_energy
 
 	# Floater drift: each surface plant wanders gently on a sin curve.
 	_floater_t += sdt
@@ -626,6 +632,95 @@ func _spawn_initial_fish() -> void:
 	}
 	betta_genome["sex"] = randi() % 2
 	_spawn_fish_at(betta_genome, Vector3(0, 4.0, 0))
+
+
+var _light_fixture_root: Node3D = null
+var _light_fixture_spots: Array[SpotLight3D] = []
+
+
+func _build_light_fixture() -> void:
+	# Build a visible voxel fixture above the tank with SpotLight3Ds inside.
+	# "bar" type: long horizontal box of dark voxels with light-colored
+	#   emissive panels underneath. Multiple SpotLights spaced along it.
+	# "spotlight" type: single circular pendant with one SpotLight.
+	var cfg := get_node_or_null("/root/TankConfig")
+	var fixture_type: String = "bar"
+	var height_above: float = 1.4
+	var size_frac: float = 0.75
+	if cfg != null:
+		fixture_type = String(cfg.light_fixture)
+		height_above = float(cfg.light_height)
+		size_frac = float(cfg.light_size)
+
+	_light_fixture_root = Node3D.new()
+	_light_fixture_root.name = "LightFixture"
+	add_child(_light_fixture_root)
+	_light_fixture_root.position = Vector3(0, TANK_HEIGHT + height_above, 0)
+
+	var dark := VoxelMat.make(Color8(28, 28, 32))
+	var panel := VoxelMat.make(Color8(245, 240, 220))   # warm panel face
+	var panel_emit := VoxelMat.make(Color8(255, 250, 210))
+
+	if fixture_type == "spotlight":
+		var radius: float = size_frac * TANK_HALF_W * 0.5
+		# Center body (square-ish pendant).
+		_add_cube(_light_fixture_root, Vector3(0, 0.0, 0),
+			Vector3(radius * 1.2, 0.25, radius * 1.2), dark)
+		# Light-emitting panel face on the underside.
+		_add_cube(_light_fixture_root, Vector3(0, -0.15, 0),
+			Vector3(radius * 1.0, 0.04, radius * 1.0), panel_emit)
+		# Add a glow ring around the panel.
+		for ang_idx in 8:
+			var ang: float = (ang_idx / 8.0) * TAU
+			_add_cube(_light_fixture_root, Vector3(cos(ang) * radius * 0.7, -0.12, sin(ang) * radius * 0.7),
+				Vector3(0.12, 0.04, 0.12), panel)
+		# Cord up to the ceiling (just for grounding the eye).
+		_add_cube(_light_fixture_root, Vector3(0, 0.4, 0),
+			Vector3(0.06, 0.6, 0.06), dark)
+		# Single SpotLight pointing down.
+		var spot := SpotLight3D.new()
+		spot.position = Vector3(0, -0.2, 0)
+		spot.rotation_degrees = Vector3(-90, 0, 0)
+		spot.spot_range = TANK_HEIGHT + height_above + 3.0
+		spot.spot_angle = 38.0
+		spot.spot_attenuation = 1.4
+		spot.shadow_enabled = false
+		_light_fixture_root.add_child(spot)
+		_light_fixture_spots.append(spot)
+	else:
+		# Bar - long thin housing across the tank width.
+		var bar_length: float = size_frac * TANK_HALF_W * 2.0
+		var bar_width: float = minf(0.8, TANK_HALF_D * 0.3)
+		# Main bar body.
+		_add_cube(_light_fixture_root, Vector3(0, 0.0, 0),
+			Vector3(bar_length, 0.22, bar_width), dark)
+		# End caps (slightly raised).
+		_add_cube(_light_fixture_root, Vector3(bar_length * 0.5, 0.05, 0),
+			Vector3(0.18, 0.32, bar_width * 1.1), dark)
+		_add_cube(_light_fixture_root, Vector3(-bar_length * 0.5, 0.05, 0),
+			Vector3(0.18, 0.32, bar_width * 1.1), dark)
+		# Emissive panel running along the underside.
+		_add_cube(_light_fixture_root, Vector3(0, -0.13, 0),
+			Vector3(bar_length * 0.9, 0.05, bar_width * 0.65), panel_emit)
+		# Suspension cords at both ends.
+		_add_cube(_light_fixture_root, Vector3(bar_length * 0.35, 0.4, 0),
+			Vector3(0.05, 0.6, 0.05), dark)
+		_add_cube(_light_fixture_root, Vector3(-bar_length * 0.35, 0.4, 0),
+			Vector3(0.05, 0.6, 0.05), dark)
+		# Multiple SpotLights spaced along the bar for even illumination.
+		var n_spots: int = 4
+		for i in n_spots:
+			var t: float = float(i + 0.5) / float(n_spots)
+			var sx: float = -bar_length * 0.45 + t * bar_length * 0.9
+			var spot := SpotLight3D.new()
+			spot.position = Vector3(sx, -0.2, 0)
+			spot.rotation_degrees = Vector3(-90, 0, 0)
+			spot.spot_range = TANK_HEIGHT + height_above + 3.0
+			spot.spot_angle = 42.0
+			spot.spot_attenuation = 1.2
+			spot.shadow_enabled = false
+			_light_fixture_root.add_child(spot)
+			_light_fixture_spots.append(spot)
 
 
 func _spawn_floaters() -> void:

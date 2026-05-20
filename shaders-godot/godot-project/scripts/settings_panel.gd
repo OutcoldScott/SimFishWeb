@@ -18,6 +18,12 @@ var _light_energy: HSlider
 var _light_yaw: HSlider
 var _light_pitch: HSlider
 var _light_warmth: HSlider
+var _light_fixture_option: OptionButton
+var _light_height: HSlider
+var _light_size: HSlider
+var _light_height_label: Label
+var _light_size_label: Label
+var _light_volumetric_check: CheckBox
 var _substrate_option: OptionButton
 var _substrate_desc: Label
 var _w_label: Label
@@ -90,6 +96,36 @@ func _build_ui() -> void:
 	_light_warmth = _add_slider_row(vbox, "Warmth (cool->warm)", 0.0, 1.0, 0.05, _light_warmth_label)
 	_light_warmth.value_changed.connect(func(v): _on_light_warmth(v))
 
+	# Fixture selection (bar vs spotlight).
+	var fixture_row := HBoxContainer.new()
+	vbox.add_child(fixture_row)
+	var fl := Label.new()
+	fl.text = "Fixture"
+	fl.custom_minimum_size = Vector2(140, 0)
+	fixture_row.add_child(fl)
+	_light_fixture_option = OptionButton.new()
+	_light_fixture_option.add_item("Bar (long LED)")
+	_light_fixture_option.set_item_metadata(0, "bar")
+	_light_fixture_option.add_item("Spotlight (pendant)")
+	_light_fixture_option.set_item_metadata(1, "spotlight")
+	_light_fixture_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_light_fixture_option.item_selected.connect(func(idx): _on_fixture(idx))
+	fixture_row.add_child(_light_fixture_option)
+
+	_light_height_label = Label.new()
+	_light_height = _add_slider_row(vbox, "Fixture height", 0.5, 4.0, 0.1, _light_height_label)
+	_light_height.value_changed.connect(func(v): _on_light_height(v))
+
+	_light_size_label = Label.new()
+	_light_size = _add_slider_row(vbox, "Fixture size", 0.3, 1.0, 0.05, _light_size_label)
+	_light_size.value_changed.connect(func(v): _on_light_size(v))
+
+	# Beams toggle.
+	_light_volumetric_check = CheckBox.new()
+	_light_volumetric_check.text = "Show light beams (god rays)"
+	_light_volumetric_check.toggled.connect(func(v): _on_volumetric(v))
+	vbox.add_child(_light_volumetric_check)
+
 	_add_section(vbox, "Substrate")
 	_substrate_option = OptionButton.new()
 	for key in TankConfig.SUBSTRATE_PROFILES.keys():
@@ -161,6 +197,14 @@ func _pull_from_config() -> void:
 	_light_yaw.value = TankConfig.light_yaw
 	_light_pitch.value = TankConfig.light_pitch
 	_light_warmth.value = TankConfig.light_warmth
+	_light_height.value = TankConfig.light_height
+	_light_size.value = TankConfig.light_size
+	_light_volumetric_check.button_pressed = TankConfig.light_volumetric
+	# Pick the fixture option matching current type.
+	for i in _light_fixture_option.item_count:
+		if _light_fixture_option.get_item_metadata(i) == TankConfig.light_fixture:
+			_light_fixture_option.select(i)
+			break
 	_update_value_labels()
 	# Pick the option matching current substrate.
 	for i in _substrate_option.item_count:
@@ -178,6 +222,26 @@ func _update_value_labels() -> void:
 	_light_yaw_label.text = "%.2f" % _light_yaw.value
 	_light_pitch_label.text = "%.2f" % _light_pitch.value
 	_light_warmth_label.text = "%.2f" % _light_warmth.value
+	_light_height_label.text = "%.1f" % _light_height.value
+	_light_size_label.text = "%.2f" % _light_size.value
+
+
+func _on_light_height(v: float) -> void:
+	TankConfig.light_height = v
+	_light_height_label.text = "%.1f" % v
+
+
+func _on_light_size(v: float) -> void:
+	TankConfig.light_size = v
+	_light_size_label.text = "%.2f" % v
+
+
+func _on_fixture(idx: int) -> void:
+	TankConfig.light_fixture = _light_fixture_option.get_item_metadata(idx)
+
+
+func _on_volumetric(v: bool) -> void:
+	TankConfig.light_volumetric = v
 
 
 func _update_substrate_desc() -> void:
