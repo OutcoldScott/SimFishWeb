@@ -306,6 +306,13 @@ func is_inside_tank(x: float, z: float, margin: float = 0.0) -> bool:
 	return _is_inside_tank(x, z, margin)
 
 
+# Public XZ sampler. Used by SimDriver when it needs a random tank-interior
+# position for algae or anything else spawned at runtime, without exposing
+# the private RNG / sampling internals.
+func sample_xz_in_tank(margin: float = 0.4) -> Vector2:
+	return _random_xz_in_band(-TANK_HALF_D + margin, TANK_HALF_D - margin, margin)
+
+
 func _is_inside_tank(x: float, z: float, margin: float = 0.0) -> bool:
 	# Point-in-shape test for the tank footprint. margin > 0 returns true
 	# only for points well inside the shape (used for spawn placement).

@@ -24,6 +24,12 @@ extends Node
 @onready var render_toggle: Button = $RenderToggle
 @onready var fish_store_toggle: Button = $FishStoreToggle
 @onready var fish_store_panel: PanelContainer = $FishStorePanel
+@onready var aquascape_toggle: Button = $AquascapeToggle
+@onready var aquascape_palette: PanelContainer = $AquascapeToolPalette
+# The four tool buttons inside the palette - built procedurally in _ready
+# because we want one button per AQUASCAPE_TOOLS entry without locking
+# in a fixed scene tree.
+var _tool_buttons: Dictionary = {}
 
 # Cached SimDriver ref for time_scale + seed + day_phase queries.
 var _sim: Node = null
@@ -92,6 +98,11 @@ const AQUASCAPE_TOOLS: Array[String] = ["dirt", "stone", "wood", "dig"]
 # of stamping single voxels.
 var _wood_drag: Node3D = null
 var _wood_drag_y_offset: float = 0.0
+# Paint-brush throttle. When LMB is held in aquascape mode (no log under
+# cursor) we drop voxels along the drag path; this prevents stacking
+# dozens of them per second on the same cell.
+var _paint_cooldown: float = 0.0
+const PAINT_INTERVAL: float = 0.08   # seconds between brush samples
 
 
 func _ready() -> void:
@@ -115,6 +126,9 @@ func _ready() -> void:
 		render_toggle.pressed.connect(render_panel.toggle)
 	if fish_store_toggle != null and fish_store_panel != null:
 		fish_store_toggle.pressed.connect(fish_store_panel.toggle)
+	if aquascape_toggle != null:
+		aquascape_toggle.pressed.connect(_toggle_aquascape)
+	_build_aquascape_palette()
 
 
 func _restore_camera_state() -> void:
@@ -184,6 +198,9 @@ func _apply_render_config() -> void:
 
 
 func _process(dt: float) -> void:
+	# Tick the aquascape brush cooldown so drag-painting deposits voxels
+	# at a steady rate regardless of frame timing.
+	_paint_cooldown = maxf(0.0, _paint_cooldown - dt)
 	# Mouse position: use the WINDOW's mouse position (not the SubViewport's),
 	# since that's where the OS cursor actually lives. get_window() returns
 	# this scene's OS window.
@@ -211,23 +228,34 @@ func _process(dt: float) -> void:
 			_drag_mode = "pan"
 			_drag_button = MOUSE_BUTTON_MIDDLE
 		elif rmb:
-			_drag_mode = "dolly"
 			_drag_button = MOUSE_BUTTON_RIGHT
+			# Aquascape mode swaps RMB from dolly to orbit so the user can
+			# still rotate the camera while LMB is busy with the brush. In
+			# normal mode RMB stays as dolly (wheel covers zoom anyway).
+			_drag_mode = "orbit" if _aquascape_mode else "dolly"
 		else:
 			_drag_button = MOUSE_BUTTON_LEFT
-			_drag_mode = "pan" if pan_modifier else "orbit"
-			# Aquascape mode: if the LMB-down landed on a placed wood log,
-			# enter wood-drag mode instead of orbit. The log will follow the
-			# cursor's substrate projection until LMB releases. Any other
-			# tool / no log under cursor falls through to the normal click
-			# (place voxel) path on release.
-			if _aquascape_mode and not pan_modifier:
+			if pan_modifier:
+				_drag_mode = "pan"
+			elif _aquascape_mode:
+				# Aquascape: LMB NEVER orbits. Either we're dragging an
+				# existing wood log (mouse went down ON a log) or we're
+				# painting voxels with the active tool. Painting fires
+				# immediately on LMB-down + continues on drag, throttled
+				# by _paint_cooldown so we don't stack 60 dirt voxels per
+				# second.
 				var picked: Node3D = _pick_wood_log(mouse_now)
 				if picked != null:
 					_wood_drag = picked
 					_wood_drag_y_offset = picked.global_position.y \
 						- _substrate_top_y()
 					_drag_mode = "wood_drag"
+				else:
+					_drag_mode = "paint"
+					_paint_cooldown = 0.0
+					_aquascape_place(mouse_now)
+			else:
+				_drag_mode = "orbit"
 	elif not any_btn and _orbiting:
 		_orbiting = false
 		_wood_drag = null
@@ -236,14 +264,16 @@ func _process(dt: float) -> void:
 		# never places aquascape voxels or starts a follow. A Shift-LMB or
 		# Space-LMB tap is treated as the user reaching for pan and then
 		# changing their mind - no action.
-		var is_click: bool = _drag_button == MOUSE_BUTTON_LEFT \
+		# Aquascape places happen DURING the drag (paint mode), not on
+		# release. So in aquascape mode the only click-like action left is
+		# the follow-fish dispatch (and that's disabled anyway since LMB
+		# in aquascape goes to paint/wood_drag, never to orbit). For
+		# normal mode this dispatches follow-cam on a clean LMB tap.
+		var is_normal_click: bool = _drag_button == MOUSE_BUTTON_LEFT \
 			and _drag_total < 12.0 \
-			and _drag_mode != "pan"
-		if is_click:
-			if _aquascape_mode:
-				_aquascape_place(mouse_now)
-			else:
-				_try_follow_click(mouse_now)
+			and _drag_mode == "orbit"   # only triggered by non-aquascape LMB
+		if is_normal_click and not _aquascape_mode:
+			_try_follow_click(mouse_now)
 		_drag_mode = ""
 		_drag_button = 0
 
@@ -267,6 +297,14 @@ func _process(dt: float) -> void:
 					radius = clampf(radius * (1.0 + delta.y * DOLLY_MOUSE_SENSITIVITY),
 						MIN_RADIUS, MAX_RADIUS)
 					_apply_camera()
+				"paint":
+					# Aquascape brush. Drop a voxel at the current cursor
+					# every PAINT_INTERVAL seconds; this lets the user
+					# "paint" dirt by dragging instead of clicking once per
+					# voxel. The cooldown is ticked elsewhere in _process.
+					if _paint_cooldown <= 0.0:
+						_aquascape_place(mouse_now)
+						_paint_cooldown = PAINT_INTERVAL
 				"wood_drag":
 					# Move the held driftwood log to the current cursor
 					# projection on the substrate. Preserve its original
@@ -390,6 +428,7 @@ func _set_time_scale(s: float) -> void:
 func _on_one() -> void:
 	if _aquascape_mode:
 		_aquascape_tool = "dirt"
+		_refresh_tool_buttons()
 	else:
 		_set_time_scale(1.0)
 
@@ -397,6 +436,7 @@ func _on_one() -> void:
 func _on_two() -> void:
 	if _aquascape_mode:
 		_aquascape_tool = "stone"
+		_refresh_tool_buttons()
 	else:
 		_set_time_scale(4.0)
 
@@ -404,6 +444,7 @@ func _on_two() -> void:
 func _on_three() -> void:
 	if _aquascape_mode:
 		_aquascape_tool = "wood"
+		_refresh_tool_buttons()
 	else:
 		_set_time_scale(16.0)
 
@@ -411,6 +452,7 @@ func _on_three() -> void:
 func _on_four() -> void:
 	if _aquascape_mode:
 		_aquascape_tool = "dig"
+		_refresh_tool_buttons()
 
 
 func _take_photo() -> void:
@@ -503,13 +545,73 @@ func _toggle_aquascape() -> void:
 			_sim.time_scale = 0.0
 		_follow_target = null
 		_ensure_aquascape_preview()
+		if aquascape_palette != null:
+			aquascape_palette.visible = true
+		_refresh_tool_buttons()
 		print("[vivarium] aquascape ON. click to place stones, shift-click for driftwood, backspace undo, B exit.")
 	else:
 		if _sim != null:
 			_sim.time_scale = _aquascape_saved_time_scale
 		if _aquascape_preview != null:
 			_aquascape_preview.visible = false
+		if aquascape_palette != null:
+			aquascape_palette.visible = false
 		print("[vivarium] aquascape OFF (resumed at %gx)" % _aquascape_saved_time_scale)
+
+
+# Build the floating tool palette shown at top-center while in aquascape
+# mode. Each tool gets a button; the currently-selected tool is
+# highlighted. Buttons forward to the existing number-key handlers so
+# the keyboard + UI paths stay consistent.
+func _build_aquascape_palette() -> void:
+	if aquascape_palette == null:
+		return
+	for c in aquascape_palette.get_children():
+		c.queue_free()
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	aquascape_palette.add_child(hb)
+	var header := Label.new()
+	header.text = "AQUASCAPE  →"
+	header.add_theme_color_override("font_color", Color8(255, 220, 80))
+	header.add_theme_font_size_override("font_size", 12)
+	hb.add_child(header)
+	var defs := [
+		{"key": "dirt",  "label": "1·dirt",  "color": Color8(150, 110, 70)},
+		{"key": "stone", "label": "2·stone", "color": Color8(120, 120, 130)},
+		{"key": "wood",  "label": "3·wood",  "color": Color8(95, 65, 35)},
+		{"key": "dig",   "label": "4·dig",   "color": Color8(220, 90, 90)},
+	]
+	for def in defs:
+		var btn := Button.new()
+		btn.text = String(def["label"])
+		btn.add_theme_color_override("font_color", Color(1, 1, 1))
+		btn.add_theme_font_size_override("font_size", 12)
+		var key: String = String(def["key"])
+		btn.pressed.connect(func():
+			_aquascape_tool = key
+			_refresh_tool_buttons())
+		hb.add_child(btn)
+		_tool_buttons[key] = btn
+	# Help hint at the right side.
+	var hint := Label.new()
+	hint.text = "  drag a log to move · BACKSPACE undo · B exit"
+	hint.add_theme_color_override("font_color", Color(0.75, 0.85, 0.95))
+	hint.add_theme_font_size_override("font_size", 10)
+	hb.add_child(hint)
+
+
+# Update which tool button looks selected. Called whenever the tool
+# changes - either by keyboard (1/2/3/4) or by clicking the palette.
+func _refresh_tool_buttons() -> void:
+	for k in _tool_buttons.keys():
+		var btn: Button = _tool_buttons[k]
+		if btn == null:
+			continue
+		if k == _aquascape_tool:
+			btn.modulate = Color(1.4, 1.4, 0.7)
+		else:
+			btn.modulate = Color(0.85, 0.85, 0.85)
 
 
 func _ensure_aquascape_preview() -> void:

@@ -241,11 +241,28 @@ func _tick(dt: float) -> void:
 			and (below_floor or randf() < 0.2):
 		var a := Algae.new()
 		algae_root.add_child(a)
-		a.global_position = Vector3(
-			randf_range(-7.5, 7.5),
-			randf_range(2.2, 5.5),
-			randf_range(-3.5, 3.5),
-		)
+		# Spawn position uses the world's tank-aware sampler so algae stay
+		# inside hex/triangle/cube tanks instead of clipping through walls.
+		# Y is anchored near the substrate (0.3-1.2 above) where algae
+		# would actually grow in a real tank AND where algae_grazer
+		# corydoras can reach them. The old random Y in (2.2, 5.5) put
+		# them mid-water floating uselessly.
+		var spawn_x: float = 0.0
+		var spawn_z: float = 0.0
+		var world := get_parent()
+		if world != null and world.has_method("sample_xz_in_tank"):
+			var xz: Vector2 = world.sample_xz_in_tank(0.5)
+			spawn_x = xz.x
+			spawn_z = xz.y
+		else:
+			# Fallback: clamp to world_bounds. Better than the old hardcoded
+			# range, still won't perfectly fit hex/triangle.
+			spawn_x = randf_range(world_bounds.position.x + 0.5,
+				world_bounds.end.x - 0.5)
+			spawn_z = randf_range(world_bounds.position.z + 0.5,
+				world_bounds.end.z - 0.5)
+		a.global_position = Vector3(spawn_x,
+			substrate_top_y + randf_range(0.3, 1.2), spawn_z)
 		var palette: Array[Color] = [
 			Color8(120, 165, 60),
 			Color8(95, 145, 70),
