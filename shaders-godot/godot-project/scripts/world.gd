@@ -808,91 +808,53 @@ func _apply_initial_phenotype_spread(genome: Dictionary, mult: float) -> void:
 
 
 func _spawn_initial_fish() -> void:
-	# Two species. Glassdarts (mid-water schoolers, mild herbivory). Mudsifters
-	# (bottom-loving, stronger herbivory, fewer of them).
-	var glassdart_genome: Dictionary = {
-		"species": "glassdart",
-		"base_color": Color8(195, 59, 59),
-		"accent_color": Color8(230, 201, 42),
-		"adult_voxel_scale": 0.18,
-		"max_age_s": 220.0,
-		"max_speed": 2.0,
-		"schooling_strength": 1.4,
-		"separation_radius": 0.6,
-		"herbivory": 0.4,
-		"fecundity": 0.8,
-		"clutch_size": 2,
-		"preferred_y": 4.0,
-	}
-	var mudsifter_genome: Dictionary = {
-		"species": "mudsifter",
-		"base_color": Color8(120, 85, 56),
-		"accent_color": Color8(205, 176, 136),
-		"adult_voxel_scale": 0.22,
-		"max_age_s": 280.0,
-		"max_speed": 1.2,
-		"schooling_strength": 0.5,
-		"separation_radius": 0.7,
-		"herbivory": 1.0,
-		"fecundity": 0.5,
-		"clutch_size": 3,
-		"preferred_y": 2.4,
-	}
-	# Read counts from TankConfig preset (or custom override).
+	# Read the preset's "stocking" dict (species_name -> count) then look up
+	# each species' genome template in TankConfig.SPECIES_LIBRARY. New species
+	# added to the library appear automatically; no code change here required.
 	var cfg := get_node_or_null("/root/TankConfig")
-	var glassdart_n: int = 14
-	var mudsifter_n: int = 5
-	var betta_n: int = 1
+	var stocking: Dictionary = {}
 	if cfg != null:
-		var preset: Dictionary = cfg.current_tank_preset()
 		if cfg.tank_preset == "custom":
-			glassdart_n = int(cfg.custom_glassdart_count)
-			mudsifter_n = int(cfg.custom_mudsifter_count)
-			betta_n = 1
+			# Custom preset honors the legacy hand-set counts on TankConfig.
+			# (Custom UI hasn't yet been expanded to all species; users who
+			# want the new fish should pick one of the preset mixes.)
+			stocking = {
+				"glassdart": int(cfg.custom_glassdart_count),
+				"mudsifter": int(cfg.custom_mudsifter_count),
+				"betta": 1,
+			}
 		else:
-			glassdart_n = int(preset.get("glassdarts", 14))
-			mudsifter_n = int(preset.get("mudsifters", 5))
-			betta_n = int(preset.get("betta", 1))
+			var preset: Dictionary = cfg.current_tank_preset()
+			stocking = preset.get("stocking", {})
+	if stocking.is_empty():
+		stocking = {"glassdart": 14, "mudsifter": 5, "betta": 1}
+
 	var phenotype_mult: float = _initial_phenotype_spread()
-
-	for i in glassdart_n:
-		var g: Dictionary = glassdart_genome.duplicate()
-		g["sex"] = i % 2
-		g["max_age_s"] += randf_range(-30, 30)
-		# Founding phenotype spread - wider for "diverse" preset, zero for clones.
-		_apply_initial_phenotype_spread(g, phenotype_mult)
-		# Clamp to tank footprint so hex/triangle shapes don't get fish in the
-		# corners outside the glass.
-		var gd_xz: Vector2 = _random_xz_in_band(-2.0, 2.0, 0.5)
-		_spawn_fish_at(g, Vector3(gd_xz.x, randf_range(3.0, 4.5), gd_xz.y))
-	for i in mudsifter_n:
-		var g: Dictionary = mudsifter_genome.duplicate()
-		g["sex"] = i % 2
-		_apply_initial_phenotype_spread(g, phenotype_mult)
-		var ms_xz: Vector2 = _random_xz_in_band(-2.0, 2.0, 0.5)
-		_spawn_fish_at(g, Vector3(ms_xz.x, randf_range(2.0, 2.8), ms_xz.y))
-
-	# One solo apex: betta-like - bigger, brighter, more territorial. Hunts
-	# baby shrimp + fry more often (high herbivory_priority via aggression).
-	var betta_genome: Dictionary = {
-		"species": "betta",
-		"base_color": Color8(80, 50, 170),       # iridescent purple-blue
-		"accent_color": Color8(230, 130, 200),
-		"adult_voxel_scale": 0.28,                # noticeably larger
-		"max_age_s": 420.0,
-		"max_speed": 1.6,
-		"schooling_strength": 0.0,                # loner
-		"separation_radius": 1.0,
-		"herbivory": 0.0,                         # carnivore
-		"fecundity": 0.0,                         # no breeding here (solo)
-		"clutch_size": 0,
-		"preferred_y": 3.8,
-	}
-	for b in betta_n:
-		var bg: Dictionary = betta_genome.duplicate()
-		bg["sex"] = randi() % 2
-		var bt_xz: Vector2 = _random_xz_in_band(-1.0, 1.0, 0.6)
-		_spawn_fish_at(bg, Vector3(bt_xz.x, 4.0, bt_xz.y))
+	for species_name in stocking.keys():
+		# Shrimp + any non-fish key is handled separately.
+		if species_name == "shrimp":
+			continue
+		var count: int = int(stocking[species_name])
+		if count <= 0:
+			continue
+		var entry: Dictionary = TankConfig.SPECIES_LIBRARY.get(species_name, {})
+		if entry.is_empty():
+			push_warning("[vivarium] unknown species in stocking: " + species_name)
+			continue
+		var template: Dictionary = entry.get("genome", {})
+		for i in count:
+			var g: Dictionary = template.duplicate(true)
+			g["sex"] = i % 2
+			# Jitter lifespan so the cohort doesn't synchronise its die-off.
+			g["max_age_s"] = float(g.get("max_age_s", 240.0)) + randf_range(-30, 30)
+			# Founding phenotype spread - varies by preset.
+			_apply_initial_phenotype_spread(g, phenotype_mult)
+			# Spawn at the species' preferred depth (plus jitter) and inside
+			# the tank's footprint via shape-aware rejection sampling.
+			var pref_y: float = float(g.get("preferred_y", 3.5))
+			var spawn_y: float = pref_y + randf_range(-0.6, 0.6)
+			var xz: Vector2 = _random_xz_in_band(-2.0, 2.0, 0.5)
+			_spawn_fish_at(g, Vector3(xz.x, spawn_y, xz.y))
 
 
 var _light_fixture_root: Node3D = null

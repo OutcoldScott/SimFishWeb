@@ -432,14 +432,26 @@ func _update_preset_desc() -> void:
 	var preset: Dictionary = TankConfig.TANK_PRESETS.get(key, {})
 	var desc: String = preset.get("description", "")
 	if key != "custom":
-		var stocking: String = "Stocking: %d glassdarts, %d mudsifters, %d betta, %d shrimp" % [
-			preset.get("glassdarts", 0),
-			preset.get("mudsifters", 0),
-			preset.get("betta", 0),
-			preset.get("shrimp", 0),
-		]
+		# Build the stocking summary by iterating the preset's stocking dict
+		# (species_name -> count). Use the friendly label from the species
+		# library so the panel reads "Glassdart tetra 12" rather than
+		# "glassdart 12". Shrimp is special-cased - it doesn't live in the
+		# species library.
+		var stocking_dict: Dictionary = preset.get("stocking", {})
+		var stocking_parts: Array[String] = []
+		for species_name in stocking_dict.keys():
+			var count: int = int(stocking_dict[species_name])
+			if count <= 0:
+				continue
+			var label: String = species_name.capitalize()
+			if species_name == "shrimp":
+				label = "Shrimp"
+			elif TankConfig.SPECIES_LIBRARY.has(species_name):
+				label = TankConfig.SPECIES_LIBRARY[species_name]["label"]
+			stocking_parts.append("%s %d" % [label, count])
+		var stocking: String = "Stocking: " + ", ".join(stocking_parts)
 		var spread: String = "Phenotype spread: %.1f×" % float(preset.get("phenotype_spread", 1.0))
-		desc = desc + "\n" + stocking + " · " + spread
+		desc = desc + "\n" + stocking + "\n" + spread
 	_preset_desc.text = desc
 
 

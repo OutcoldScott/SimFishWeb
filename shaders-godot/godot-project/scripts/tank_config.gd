@@ -84,40 +84,300 @@ var custom_glassdart_count: int = 14
 var custom_mudsifter_count: int = 5
 var custom_shrimp_count: int = 12
 
+# ---- Species library ----
+# Every fish species the world can spawn lives here. Each entry has a label
+# (for the UI), a description (shown next to the preset), and a `genome`
+# dict that gets handed straight to Fish.init_genome().
+#
+# Adding a new species: append an entry here, reference it in a preset's
+# "stocking" dict. World.gd reads from the library so no changes there are
+# needed when you add a fish.
+#
+# The "genome" dict reuses the fish.gd genome keys verbatim. See fish.gd's
+# init_genome() for the canonical list (base_color, accent_color,
+# adult_voxel_scale, max_age_s, max_speed, schooling_strength, etc.) plus
+# the body phenotypes (fin_length_factor, body_elongation, body_depth_factor,
+# head_proportion, dorsal_height_factor, tail_fork_depth, pattern_type).
+const SPECIES_LIBRARY: Dictionary = {
+	"glassdart": {
+		"label": "Glassdart tetra",
+		"description": "Mid-water schoolers. Streamlined body, fast, mild herbivory.",
+		"genome": {
+			"species": "glassdart",
+			"base_color": Color8(195, 59, 59),
+			"accent_color": Color8(230, 201, 42),
+			"adult_voxel_scale": 0.18,
+			"max_age_s": 220.0,
+			"max_speed": 2.0,
+			"schooling_strength": 1.4,
+			"separation_radius": 0.6,
+			"herbivory": 0.4,
+			"fecundity": 0.8,
+			"clutch_size": 2,
+			"preferred_y": 4.0,
+			"body_elongation": 1.10,
+			"body_depth_factor": 0.85,
+		},
+	},
+	"mudsifter": {
+		"label": "Mudsifter (cory-like)",
+		"description": "Bottom-dweller. Strong herbivore. Sifts substrate for detritus.",
+		"genome": {
+			"species": "mudsifter",
+			"base_color": Color8(120, 85, 56),
+			"accent_color": Color8(205, 176, 136),
+			"adult_voxel_scale": 0.22,
+			"max_age_s": 280.0,
+			"max_speed": 1.2,
+			"schooling_strength": 0.5,
+			"separation_radius": 0.7,
+			"herbivory": 1.0,
+			"fecundity": 0.5,
+			"clutch_size": 3,
+			"preferred_y": 2.4,
+			"body_elongation": 1.05,
+			"body_depth_factor": 1.05,
+			"head_proportion": 1.15,
+		},
+	},
+	"betta": {
+		"label": "Betta (solo apex)",
+		"description": "Solitary carnivore. Large, brightly colored, territorial. Hunts fry.",
+		"genome": {
+			"species": "betta",
+			"base_color": Color8(80, 50, 170),
+			"accent_color": Color8(230, 130, 200),
+			"adult_voxel_scale": 0.28,
+			"max_age_s": 420.0,
+			"max_speed": 1.6,
+			"schooling_strength": 0.0,
+			"separation_radius": 1.0,
+			"herbivory": 0.0,
+			"fecundity": 0.0,
+			"clutch_size": 0,
+			"preferred_y": 3.8,
+			"fin_length_factor": 1.4,
+			"dorsal_height_factor": 1.35,
+			"tail_fork_depth": 0.7,
+		},
+	},
+	"killifish": {
+		"label": "Killifish",
+		"description": "Surface dweller. Brilliantly colored, short-lived, breeds prolifically.",
+		"genome": {
+			"species": "killifish",
+			# Killifish are stunningly bright - turquoise body, orange accents.
+			"base_color": Color8(40, 175, 195),
+			"accent_color": Color8(245, 130, 60),
+			"adult_voxel_scale": 0.14,        # small
+			"max_age_s": 150.0,               # short-lived in the wild
+			"max_speed": 1.7,
+			"schooling_strength": 0.4,        # loose pairs, not tight schools
+			"separation_radius": 0.5,
+			"herbivory": 0.3,                 # eats small invertebrates + detritus
+			"fecundity": 1.6,                 # very high - "annual" killifish strategy
+			"clutch_size": 3,
+			"preferred_y": 5.2,               # near surface
+			"body_elongation": 1.20,
+			"body_depth_factor": 0.85,
+			"fin_length_factor": 1.25,
+			"dorsal_height_factor": 1.15,
+			"pattern_type": 2,                # spots - signature killifish look
+			"color_dot_count": 3,
+		},
+	},
+	"guppy": {
+		"label": "Guppy",
+		"description": "Tiny livebearer. Pastel rainbows. Breeds constantly in mid-water.",
+		"genome": {
+			"species": "guppy",
+			"base_color": Color8(220, 175, 230),  # lavender pastel
+			"accent_color": Color8(250, 220, 100), # gold tail flash
+			"adult_voxel_scale": 0.11,         # smallest
+			"max_age_s": 180.0,
+			"max_speed": 1.5,
+			"schooling_strength": 0.7,         # loose shoals
+			"separation_radius": 0.4,
+			"herbivory": 0.6,                  # omnivore, mostly plants
+			"fecundity": 1.8,                  # very high
+			"clutch_size": 4,
+			"preferred_y": 3.6,
+			"body_elongation": 0.95,
+			"body_depth_factor": 1.0,
+			"fin_length_factor": 1.45,          # signature flowing tail
+			"tail_fork_depth": 0.3,
+			"pattern_type": 2,                  # stripes
+		},
+	},
+	"pufferfish": {
+		"label": "Dwarf pufferfish",
+		"description": "Round, slow, solitary. Hunts snails + shrimp. Inflates when stressed.",
+		"genome": {
+			"species": "pufferfish",
+			"base_color": Color8(200, 180, 80),  # yellow-olive
+			"accent_color": Color8(60, 50, 40),  # dark spots
+			"adult_voxel_scale": 0.22,
+			"max_age_s": 360.0,
+			"max_speed": 0.7,                   # slow cruiser
+			"schooling_strength": 0.0,          # solitary
+			"separation_radius": 1.3,
+			"herbivory": 0.0,                   # strict carnivore
+			"fecundity": 0.15,
+			"clutch_size": 1,
+			"preferred_y": 3.0,
+			"body_elongation": 0.65,            # signature round body
+			"body_depth_factor": 1.55,
+			"head_proportion": 1.25,
+			"fin_length_factor": 0.55,
+			"dorsal_height_factor": 0.6,
+			"tail_fork_depth": 0.4,
+			"pattern_type": 2,               # dotted - signature puffer look
+			"color_dot_count": 4,
+		},
+	},
+	"danio": {
+		"label": "Zebra danio",
+		"description": "Fast top schooler. Striped, restless, never stops moving.",
+		"genome": {
+			"species": "danio",
+			"base_color": Color8(180, 195, 215), # silver-blue
+			"accent_color": Color8(35, 45, 90),  # dark blue stripe
+			"adult_voxel_scale": 0.15,
+			"max_age_s": 200.0,
+			"max_speed": 2.4,                   # fastest in the tank
+			"schooling_strength": 1.8,
+			"separation_radius": 0.45,
+			"herbivory": 0.5,
+			"fecundity": 1.0,
+			"clutch_size": 3,
+			"preferred_y": 4.6,
+			"body_elongation": 1.30,
+			"body_depth_factor": 0.75,
+			"pattern_type": 1,                  # lateral stripes - zebra look
+		},
+	},
+	"corydoras": {
+		"label": "Corydoras (armored cat)",
+		"description": "Gentle bottom group. Plates of armor. Sifts substrate with whiskers.",
+		"genome": {
+			"species": "corydoras",
+			"base_color": Color8(180, 165, 130),  # tan
+			"accent_color": Color8(60, 45, 30),   # dark armor lines
+			"adult_voxel_scale": 0.18,
+			"max_age_s": 360.0,
+			"max_speed": 0.9,
+			"schooling_strength": 1.0,           # tight bottom group
+			"separation_radius": 0.5,
+			"herbivory": 0.95,                   # detritus + plants
+			"fecundity": 0.4,
+			"clutch_size": 3,
+			"preferred_y": 2.0,                  # very bottom-loving
+			"body_elongation": 1.10,
+			"body_depth_factor": 1.10,
+			"head_proportion": 1.20,
+			"pattern_type": 1,
+			"color_dot_count": 2,
+		},
+	},
+	"angelfish": {
+		"label": "Angelfish",
+		"description": "Tall slow centerpiece. Mid-water, pairs up, defends territory.",
+		"genome": {
+			"species": "angelfish",
+			"base_color": Color8(215, 215, 220),  # silver
+			"accent_color": Color8(35, 35, 45),   # bold black bars
+			"adult_voxel_scale": 0.26,
+			"max_age_s": 480.0,                  # long-lived
+			"max_speed": 0.9,                    # slow + graceful
+			"schooling_strength": 0.3,           # mated pairs only
+			"separation_radius": 1.1,
+			"herbivory": 0.4,
+			"fecundity": 0.3,
+			"clutch_size": 2,
+			"preferred_y": 3.6,
+			"body_elongation": 0.85,
+			"body_depth_factor": 1.75,           # very tall
+			"fin_length_factor": 1.65,           # long trailing fins
+			"dorsal_height_factor": 1.7,
+			"tail_fork_depth": 0.9,
+			"pattern_type": 3,                   # vertical bars - signature angelfish
+		},
+	},
+}
+
+
+func species_label(key: String) -> String:
+	var entry: Dictionary = SPECIES_LIBRARY.get(key, {})
+	return entry.get("label", key)
+
+
+# Each preset's "stocking" dict maps species_name -> count. "shrimp" is
+# handled by world's _spawn_initial_shrimp() separately. New species can
+# be added without changing world.gd - just append them to a stocking
+# dict here.
 const TANK_PRESETS: Dictionary = {
 	"community": {
 		"label": "Community (balanced)",
-		"glassdarts": 14, "mudsifters": 5, "betta": 1, "shrimp": 12,
-		"phenotype_spread": 1.0,   # default mutation range
-		"description": "Balanced mix: schooling tetras + bottom-dwellers + 1 betta apex.",
+		"stocking": {
+			"glassdart": 12, "mudsifter": 4, "guppy": 4, "corydoras": 3,
+			"betta": 1, "shrimp": 12,
+		},
+		"phenotype_spread": 1.0,
+		"description": "Balanced mix: tetras + guppies + bottom group + 1 betta apex.",
 	},
 	"tetra_school": {
 		"label": "Tetra school (peaceful)",
-		"glassdarts": 28, "mudsifters": 0, "betta": 0, "shrimp": 18,
+		"stocking": {
+			"glassdart": 22, "danio": 8, "shrimp": 18,
+		},
 		"phenotype_spread": 0.5,
-		"description": "Pure schooling tetras + dense shrimp colony. No apex.",
+		"description": "Pure schoolers (tetras + danios) + dense shrimp colony. No apex.",
 	},
 	"apex_tank": {
 		"label": "Apex predator + prey",
-		"glassdarts": 8, "mudsifters": 2, "betta": 1, "shrimp": 20,
+		"stocking": {
+			"glassdart": 6, "guppy": 4, "mudsifter": 2,
+			"betta": 1, "pufferfish": 1, "shrimp": 20,
+		},
 		"phenotype_spread": 0.8,
-		"description": "Lots of shrimp + small fish for the betta to hunt.",
+		"description": "Lots of prey + a betta and a puffer competing for the snacks.",
 	},
 	"diverse": {
 		"label": "Diverse founding stock",
-		"glassdarts": 12, "mudsifters": 6, "betta": 1, "shrimp": 12,
-		"phenotype_spread": 2.5,  # wide initial trait variation
-		"description": "Wide initial phenotype spread. Evolution diverges fast.",
+		"stocking": {
+			"glassdart": 8, "danio": 4, "guppy": 4, "killifish": 4,
+			"mudsifter": 3, "corydoras": 3, "betta": 1, "shrimp": 12,
+		},
+		"phenotype_spread": 2.5,
+		"description": "Wide phenotype spread + every species. Evolution diverges fast.",
 	},
 	"single_species": {
 		"label": "Single species (clones)",
-		"glassdarts": 20, "mudsifters": 0, "betta": 0, "shrimp": 8,
-		"phenotype_spread": 0.0,  # everyone is a clone of the template
+		"stocking": {"glassdart": 20, "shrimp": 8},
+		"phenotype_spread": 0.0,
 		"description": "All glassdarts start identical. Drift emerges slowly.",
+	},
+	"exotic_mix": {
+		"label": "Exotic mix (full reef)",
+		"stocking": {
+			"killifish": 5, "guppy": 6, "danio": 6, "pufferfish": 1,
+			"angelfish": 2, "corydoras": 4, "shrimp": 14,
+		},
+		"phenotype_spread": 1.2,
+		"description": "All 6 new species, no glassdart/betta. Angelfish centerpiece + puffer.",
+	},
+	"showcase": {
+		"label": "Showcase tank",
+		"stocking": {
+			"angelfish": 2, "killifish": 4, "guppy": 6, "corydoras": 4,
+			"shrimp": 12,
+		},
+		"phenotype_spread": 0.8,
+		"description": "Tall angelfish over a guppy + corydoras + killifish community. No predators.",
 	},
 	"custom": {
 		"label": "Custom",
-		"glassdarts": -1, "mudsifters": -1, "betta": -1, "shrimp": -1,
+		"stocking": {},
 		"phenotype_spread": 1.0,
 		"description": "Set counts manually below.",
 	},
