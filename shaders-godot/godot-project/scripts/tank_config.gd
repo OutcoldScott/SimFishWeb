@@ -216,12 +216,14 @@ const SPECIES_LIBRARY: Dictionary = {
 	},
 	"guppy": {
 		"label": "Guppy",
-		"description": "Tiny neon-yellow livebearer with a gold tail. Loose shoals in mid-water.",
+		"description": "Dark slate body with a brilliant scarlet fan tail. Loose mid-water shoals.",
 		"genome": {
 			"species": "guppy",
-			# Matches the user's actual tank - bright neon yellow guppies.
-			"base_color": Color8(255, 215, 35),
-			"accent_color": Color8(255, 95, 35),
+			# Matches the user's photo: charcoal-grey body, brilliant red
+			# flowing tail (a separate tail_color zone, see fish.gd).
+			"base_color": Color8(45, 50, 60),
+			"accent_color": Color8(255, 240, 90),
+			"tail_color": Color8(240, 55, 30),
 			"adult_voxel_scale": 0.11,
 			"max_age_s": 180.0,
 			"max_speed": 1.5,
@@ -233,13 +235,13 @@ const SPECIES_LIBRARY: Dictionary = {
 			"preferred_y": 3.6,
 			"body_elongation": 0.95,
 			"body_depth_factor": 1.0,
-			"fin_length_factor": 1.45,
+			"fin_length_factor": 1.55,           # extra long signature tail
 			"tail_fork_depth": 0.3,
 			"pattern_type": 2,
 			"swim_pattern": "shoal",
-			"tail_shape": 1,                    # fan - signature flowy guppy tail
+			"tail_shape": 1,                     # fan - signature guppy
 			"eye_size_factor": 1.05,
-			"ventral_profile": 1.1,             # slightly round belly
+			"ventral_profile": 1.1,
 		},
 	},
 	"pufferfish": {

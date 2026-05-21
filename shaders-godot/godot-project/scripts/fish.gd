@@ -27,6 +27,13 @@ enum Mode { CRUISE, FORAGE, COURT, SPAWN, FLEE, REST }
 var species: String = "glassdart"
 var base_color: Color = Color8(195, 59, 59)
 var accent_color: Color = Color8(230, 201, 42)
+# Tail tint - a SEPARATE bright color zone applied to the tail fin voxels
+# instead of falling back to a darkened base_color. This is what gives male
+# guppies their dramatic "dark body, brilliant red tail" silhouette. If
+# the genome doesn't supply one, we derive it from accent_color at build
+# time (no behavior change for older fish).
+var tail_color: Color = Color8(0, 0, 0)
+var _tail_color_set: bool = false
 var adult_voxel_scale: float = 0.18
 var max_age_s: float = 240.0            # ~4 minutes lifespan for visible cycles
 var max_speed: float = 1.8
@@ -252,6 +259,9 @@ func init_genome(genome: Dictionary) -> void:
 	species = genome.get("species", species)
 	base_color = genome.get("base_color", base_color)
 	accent_color = genome.get("accent_color", accent_color)
+	if genome.has("tail_color"):
+		tail_color = genome["tail_color"]
+		_tail_color_set = true
 	adult_voxel_scale = genome.get("adult_voxel_scale", adult_voxel_scale)
 	max_age_s = genome.get("max_age_s", max_age_s)
 	max_speed = genome.get("max_speed", max_speed)
@@ -378,6 +388,12 @@ func _build_body() -> void:
 	var mat_accent := _make_mat(accent_color)
 	var mat_eye := _make_mat(Color8(11, 26, 34))
 	var mat_fin := _make_mat(base_color.darkened(0.15))
+	# Tail fin material: defaults to a darker shade of base_color, but if
+	# the genome supplied an explicit tail_color we use that (male guppies'
+	# bright red/orange fan against a dark body).
+	var effective_tail: Color = tail_color if _tail_color_set \
+		else base_color.darkened(0.15)
+	var mat_tail := _make_mat(effective_tail)
 
 	_bank_pivot = Node3D.new()
 	_bank_pivot.name = "BankPivot"
@@ -539,40 +555,39 @@ func _build_body() -> void:
 	#   3 = square     (paddle - corydoras / loach)
 	var fl: float = fin_length_factor
 	var tf: float = tail_fork_depth
+	# Tail voxels use mat_tail (the bright zone). Dorsal / anal / pectorals
+	# above continue to use mat_fin.
 	match tail_shape:
 		1:  # fan / round
-			# 4 voxels arranged in a vertical arc behind the peduncle.
 			for ang in [-0.75, -0.25, 0.25, 0.75]:
 				_add_voxel_to(_tail_pivot,
 					Vector3(0, v * ang * 0.6, v * (0.95 * fl)),
-					Vector3(v * 0.15, v * 0.4, v * (0.55 * fl)), mat_fin)
+					Vector3(v * 0.15, v * 0.4, v * (0.55 * fl)), mat_tail)
 		2:  # lyre - long top + bottom trailing rays
-			# Inner pair short, outer pair long + curving outward.
 			_add_voxel_to(_tail_pivot, Vector3(0, v * 0.35 * tf, v * (0.8 * fl)),
-				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_fin)
+				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.35 * tf, v * (0.8 * fl)),
-				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_fin)
+				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot,
 				Vector3(0, v * (1.1 * fl * tf), v * (1.7 * fl)),
-				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_fin)
+				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot,
 				Vector3(0, v * (-1.1 * fl * tf), v * (1.7 * fl)),
-				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_fin)
-		3:  # square paddle - rounded squarish silhouette
+				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_tail)
+		3:  # square paddle
 			_add_voxel_to(_tail_pivot, Vector3(0, 0, v * (0.95 * fl)),
-				Vector3(v * 0.15, v * 1.0, v * (0.7 * fl)), mat_fin)
+				Vector3(v * 0.15, v * 1.0, v * (0.7 * fl)), mat_tail)
 		_:  # 0 = forked (default)
 			_add_voxel_to(_tail_pivot, Vector3(0, v * 0.45 * tf, v * (0.9 * fl)),
-				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
+				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.45 * tf, v * (0.9 * fl)),
-				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
-			# Outer fin tips, further back and further apart for forked tails.
+				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot,
 				Vector3(0, v * (0.7 * fl * tf), v * (1.4 * fl)),
-				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
+				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_tail)
 			_add_voxel_to(_tail_pivot,
 				Vector3(0, v * (-0.7 * fl * tf), v * (1.4 * fl)),
-				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
+				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_tail)
 	# Apply body elongation + depth scaling. The bank pivot's local Y stretches
 	# the body height (puffer = 1.4, minnow = 0.7), Z stretches length.
 	if _bank_pivot != null:
@@ -956,6 +971,34 @@ func tick(dt: float, neighbors: Array, plants: Array, waste: Array,
 	# the substrate at night.
 	var dy_outside: float = maxf(0.0, absf(dy) - home_y_radius)
 	desired.y += signf(dy) * (home_y_radius * 0.4 + dy_outside * 1.4)
+
+	# FRY HIDE-AT-LOG. Baby fish in real Walstad tanks survive by clinging
+	# to driftwood, dense plants, or moss - anywhere larger fish can't
+	# reach. We approximate this by pulling MATURITY_FRY individuals
+	# toward the nearest hardscape voxel (driftwood or stone) on the
+	# world's Hardscape + Aquascape containers. Once they grow into
+	# juveniles the bias drops away. This dramatically improves fry
+	# survival under predation pressure - matches the real "the babies
+	# cling to the log" behavior the user observes in their tank.
+	if maturity == MATURITY_FRY and sim != null:
+		var hide_target: Vector3 = Vector3(INF, 0, 0)
+		var best_d2: float = 16.0   # 4 unit search radius
+		var hardscape = sim.get("hardscape_root")
+		if hardscape != null:
+			for h in hardscape.get_children():
+				if not is_instance_valid(h):
+					continue
+				var d2: float = (h.global_position - position).length_squared()
+				if d2 < best_d2:
+					best_d2 = d2
+					hide_target = h.global_position
+		if not is_inf(hide_target.x):
+			var to_hide: Vector3 = hide_target - position
+			# Pull toward the log, but stop ~0.3 units short so the fry
+			# hovers next to it rather than penetrating the voxel.
+			var dist: float = to_hide.length()
+			if dist > 0.3:
+				desired += to_hide.normalized() * effective_max * 0.8
 
 	# HOME-PULL. Each fish has its own home_x / home_z territory; if the fish
 	# wanders past home_radius, pull it back. This is the single biggest fix
@@ -1416,6 +1459,10 @@ func produce_offspring_genome(partner: Fish) -> Dictionary:
 			lerp_random_base, color_muta),
 		"accent_color": accent_color.lerp(partner.accent_color, mix).lerp(
 			lerp_random_accent, color_muta * 0.7),
+		# Tail color inherits like the others if either parent had one set.
+		"tail_color": (tail_color if _tail_color_set else accent_color).lerp(
+			partner.tail_color if partner._tail_color_set else partner.accent_color,
+			mix).lerp(Color(randf(), randf(), randf()), color_muta * 0.5),
 		"adult_voxel_scale": new_size,
 		"max_age_s": (max_age_s + partner.max_age_s) * 0.5 + randf_range(-25.0, 25.0),
 		"max_speed": (max_speed + partner.max_speed) * 0.5 + randf_range(-0.15, 0.15),

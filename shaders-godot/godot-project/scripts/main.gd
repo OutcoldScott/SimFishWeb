@@ -22,6 +22,8 @@ extends Node
 @onready var render_panel: PanelContainer = $RenderPanel
 @onready var settings_toggle: Button = $SettingsToggle
 @onready var render_toggle: Button = $RenderToggle
+@onready var fish_store_toggle: Button = $FishStoreToggle
+@onready var fish_store_panel: PanelContainer = $FishStorePanel
 
 # Cached SimDriver ref for time_scale + seed + day_phase queries.
 var _sim: Node = null
@@ -104,6 +106,8 @@ func _ready() -> void:
 		settings_toggle.pressed.connect(settings_panel.toggle)
 	if render_toggle != null and render_panel != null:
 		render_toggle.pressed.connect(render_panel.toggle)
+	if fish_store_toggle != null and fish_store_panel != null:
+		fish_store_toggle.pressed.connect(fish_store_panel.toggle)
 
 
 func _restore_camera_state() -> void:
@@ -580,6 +584,14 @@ func _aquascape_place(mouse_pos: Vector2) -> void:
 	var size_y: float = 0.5
 	hit.y = top_y + size_y * 0.5
 
+	# Wood is special: spawn a multi-voxel "log" (5-7 voxels in a gentle
+	# curve) parented onto the world's Hardscape container so the fry
+	# hide-at-log behavior can find it. Returns early after spawning the
+	# log so we don't fall into the generic single-voxel path below.
+	if _aquascape_tool == "wood":
+		_aquascape_place_log(Vector3(hit.x, top_y, hit.z))
+		return
+
 	# Pick color + voxel size based on tool.
 	var color: Color
 	var voxel_size: Vector3 = Vector3(0.5, size_y, 0.5)
@@ -599,14 +611,11 @@ func _aquascape_place(mouse_pos: Vector2) -> void:
 			]
 			color = palette[randi() % palette.size()]
 			voxel_size = Vector3(0.9, 0.9, 0.9)
-		"wood":
-			color = Color8(78, 52, 32)
-			voxel_size = Vector3(0.9, 0.9, 0.9)
 		_:
 			color = Color8(120, 120, 120)
 			voxel_size = Vector3(0.5, 0.5, 0.5)
 
-	# For stones / wood, adjust hit.y so the bigger voxel rests on the column.
+	# For stones, adjust hit.y so the bigger voxel rests on the column.
 	hit.y = top_y + voxel_size.y * 0.5
 
 	var mi := MeshInstance3D.new()
@@ -626,6 +635,59 @@ func _aquascape_place(mouse_pos: Vector2) -> void:
 	mi.set_meta("aquascape_tool", _aquascape_tool)
 	_aquascape_placed.append(mi)
 	print("[vivarium] placed %s at %s (total %d)" % [_aquascape_tool, hit, _aquascape_placed.size()])
+
+
+# Spawn a driftwood "log" as a 5-7 voxel chain in a gentle curve, parented
+# to the world's Hardscape container so fry can hide against it. The log
+# is a Node3D so the entire piece moves as one when the user drags it
+# during aquascape mode.
+func _aquascape_place_log(base: Vector3) -> void:
+	if world == null:
+		return
+	var hardscape := world.get_node_or_null("Hardscape")
+	if hardscape == null:
+		# Fall back to world root if Hardscape wasn't built yet.
+		hardscape = world
+	var log := Node3D.new()
+	log.name = "AquaLog"
+	hardscape.add_child(log)
+	log.global_position = base + Vector3(0, 0.35, 0)
+	var voxel_mat_script := load("res://scripts/voxel_mat.gd")
+	# Random orientation: pick an angle in the XZ plane + a curve sign.
+	var theta: float = randf_range(0.0, TAU)
+	var forward: Vector3 = Vector3(cos(theta), 0, sin(theta))
+	var curve_sign: float = 1.0 if randf() < 0.5 else -1.0
+	var dark := Color8(58, 38, 22)
+	var mid := Color8(78, 52, 32)
+	var light := Color8(98, 70, 46)
+	var palette: Array[Color] = [dark, mid, light, mid, dark]
+	var n_segments: int = randi_range(5, 7)
+	for i in n_segments:
+		var t: float = float(i) / float(maxi(1, n_segments - 1))
+		# Curve offset perpendicular to forward.
+		var perp: Vector3 = Vector3(-forward.z, 0, forward.x) * curve_sign
+		var offset: Vector3 = forward * (i - n_segments * 0.5) * 0.6 \
+			+ perp * sin(t * PI) * 0.35
+		# Slight Y arc (logs are not flat).
+		offset.y = sin(t * PI) * 0.2
+		var seg := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		# Slight size variation so the log doesn't look made of identical bricks.
+		var s: float = 0.7 + randf_range(-0.1, 0.1)
+		bm.size = Vector3(s, s * 0.85, s)
+		seg.mesh = bm
+		var c: Color = palette[i % palette.size()]
+		if voxel_mat_script != null:
+			seg.material_override = voxel_mat_script.make(c)
+		else:
+			var sm := StandardMaterial3D.new()
+			sm.albedo_color = c
+			seg.material_override = sm
+		log.add_child(seg)
+		seg.position = offset
+	log.set_meta("aquascape_tool", "wood")
+	_aquascape_placed.append(log)
+	print("[vivarium] placed driftwood log at %s" % base)
 
 
 func _column_top_y(x: float, z: float) -> float:

@@ -41,6 +41,7 @@ var algae: Array = []   # Algae nodes; untyped so the script loads even if
 var substrate: SubstrateGrid = null
 var snails_root: Node3D = null   # set by world so SimDriver can scan snail children
 var algae_root: Node3D = null    # container for algae voxels
+var hardscape_root: Node3D = null  # driftwood + stones the fry hide against
 var world_bounds: AABB = AABB(Vector3(-8, 1.6, -4), Vector3(16, 5, 8))
 var substrate_top_y: float = 1.6
 

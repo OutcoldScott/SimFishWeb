@@ -135,6 +135,8 @@ func _ready() -> void:
 	_spawn_surface_ripples()
 	# Make sure SimDriver can find the snails container for predator AI.
 	sim.snails_root = get_node_or_null("Snails")
+	# Hardscape container - fry hide-at-log behavior reads this.
+	sim.hardscape_root = get_node_or_null("Hardscape")
 	# Seed the substrate with some uneven nutrients so plants in nutrient-rich
 	# spots immediately start to outpace the others - visible variance.
 	_seed_nutrient_hotspots()
@@ -1508,6 +1510,17 @@ func add_mulm_voxel(pos: Vector3) -> void:
 	mi.material_override = VoxelMat.make(Color8(28, 22, 16))
 	container.add_child(mi)
 	_mulm_voxels.append(mi)
+
+
+# Public entry point for the retro fish store. Picks a sensible spawn
+# position near the top-center (so the new arrival drops in visibly), then
+# delegates to the private spawn helper. The fish_store.gd panel calls
+# this; nothing else does.
+func spawn_purchased_fish(genome: Dictionary) -> void:
+	var pref_y: float = float(genome.get("preferred_y", 3.8))
+	var spawn_y: float = clampf(pref_y + 0.4, SUBSTRATE_DEPTH + 0.5, WATER_HEIGHT - 0.4)
+	var xz: Vector2 = _random_xz_in_band(-TANK_HALF_D * 0.6, TANK_HALF_D * 0.6, 0.8)
+	_spawn_fish_at(genome, Vector3(xz.x, spawn_y, xz.y))
 
 
 func _spawn_fish_at(genome: Dictionary, pos: Vector3) -> void:
