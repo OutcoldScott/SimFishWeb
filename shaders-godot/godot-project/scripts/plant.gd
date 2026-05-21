@@ -122,11 +122,20 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 	# breaking through the meniscus.
 	if not has_emerged and top_world_y() >= water_surface_y - 0.15:
 		_emerge_above_water()
+	# Seeding. Emerged plants seed often (foundation for the surface meadow);
+	# fully grown UNDERWATER plants also seed occasionally so the substrate
+	# population renews itself over a long run instead of plateauing at the
+	# founding count.
+	seed_timer += dt
 	if has_emerged:
-		seed_timer += dt
 		if seed_timer >= 18.0 and randf() < 0.5:
 			seed_timer = 0.0
 			_cast_seed()
+	elif current_height >= max_height and seed_timer >= 60.0 and randf() < 0.25:
+		# Mature underwater plant: slow propagation. Tuned so a fully-stocked
+		# tank gets ~1 new seedling every couple of minutes per mature plant.
+		seed_timer = 0.0
+		_cast_seed()
 
 
 func _flower() -> void:

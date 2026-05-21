@@ -28,11 +28,11 @@ const PAUSE_CHANCE: float = 0.3            # when turning, sometimes just sit st
 # Breeding + lifecycle. Snails are prolific in real tanks; unchecked their
 # voxel footprint smothers the whole substrate. We cap population and give
 # them a finite lifespan so the system stays bounded.
-const BREEDING_INTERVAL_MIN: float = 180.0
-const BREEDING_INTERVAL_MAX: float = 360.0
+const BREEDING_INTERVAL_MIN: float = 120.0
+const BREEDING_INTERVAL_MAX: float = 240.0
 const MATURITY_AGE: float = 60.0          # baby -> adult after a minute
 const LIFESPAN_S: float = 720.0           # 12-minute lifespan; senescence at end
-const POPULATION_CAP: int = 28            # global cap. Above this, no laying.
+const POPULATION_CAP: int = 38            # global cap. Above this, no laying.
 
 var _direction: Vector2 = Vector2.RIGHT     # in wall-tangent space
 var _facing: Vector2 = Vector2.RIGHT        # smoothed direction the body points

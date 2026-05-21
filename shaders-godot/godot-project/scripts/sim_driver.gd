@@ -227,8 +227,17 @@ func _tick(dt: float) -> void:
 		if is_instance_valid(p):
 			plant_biomass += p.biomass()
 	var bloom_favor: bool = n_total > 4.0 and plant_biomass < 350
+	# Algae floor: always keep at least 3 clusters drifting so the cory /
+	# algae_grazer food chain has something to graze even in a "clean"
+	# tank. Without this baseline, the moment algae crashes the grazers
+	# starve and the food web stalls. Force-spawn when below the floor
+	# regardless of nutrient state.
+	const ALGAE_FLOOR: int = 3
+	var below_floor: bool = algae.size() < ALGAE_FLOOR
+	var should_bloom: bool = bloom_favor or below_floor
 	# Cap algae count so it doesn't explode.
-	if bloom_favor and algae.size() < 60 and algae_root != null and randf() < 0.2:
+	if should_bloom and algae.size() < 60 and algae_root != null \
+			and (below_floor or randf() < 0.2):
 		var a := Algae.new()
 		algae_root.add_child(a)
 		a.global_position = Vector3(

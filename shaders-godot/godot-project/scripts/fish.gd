@@ -94,8 +94,10 @@ var algae_grazer: bool = false
 # All heritable, so lineages can split into different territorial niches
 # over generations.
 var home_x: float = INF                  # INF = set lazily from spawn pos
+var home_y: float = INF                  # vertical territory anchor; INF = use preferred_y
 var home_z: float = INF
-var home_radius: float = 2.5             # how far the fish wanders from home
+var home_radius: float = 2.5             # how far the fish wanders from home (XZ)
+var home_y_radius: float = 0.8           # how far the fish strays vertically from home_y
 var wander_strength: float = 1.0         # heading_offset magnitude multiplier
 var dart_chance: float = 0.0             # per-second probability of darting
 var dart_speed_mult: float = 1.6         # multiplier on speed during a dart
@@ -235,17 +237,22 @@ func init_genome(genome: Dictionary) -> void:
 	# override them on the next reads below.
 	_apply_swim_pattern_defaults()
 	home_x = float(genome.get("home_x", home_x))
+	home_y = float(genome.get("home_y", home_y))
 	home_z = float(genome.get("home_z", home_z))
 	home_radius = float(genome.get("home_radius", home_radius))
+	home_y_radius = float(genome.get("home_y_radius", home_y_radius))
 	wander_strength = float(genome.get("wander_strength", wander_strength))
 	dart_chance = float(genome.get("dart_chance", dart_chance))
 	dart_speed_mult = float(genome.get("dart_speed_mult", dart_speed_mult))
 	# Lazy initialization of home: if the genome didn't supply one, anchor
-	# to the spawn position so each fish gets its OWN territory rather than
-	# every fish converging on the tank centroid.
+	# to the spawn position (XZ) and to preferred_y (Y) plus jitter. Each
+	# fish ends up with its own 3D territory rather than every fish
+	# converging on the tank centroid AT preferred_y.
 	if is_inf(home_x):
 		home_x = global_position.x + randf_range(-1.5, 1.5)
 		home_z = global_position.z + randf_range(-1.5, 1.5)
+	if is_inf(home_y):
+		home_y = preferred_y + randf_range(-0.6, 0.6)
 	# A fry is born tiny - we'll lerp scale as it matures.
 	scale = Vector3.ONE * _maturity_scale()
 	_build_body()
@@ -851,29 +858,29 @@ func tick(dt: float, neighbors: Array, plants: Array, waste: Array,
 	var tightness: float = 1.0 + stress * 1.5
 	desired += _boids(neighbors, tightness) * schooling_strength
 
-	# Drift toward preferred Y layer, more strongly when far from it. If the
-	# tank is low on dissolved O2, EVERY fish biases up toward the surface
-	# to gulp - this is the real-world "fish at the surface" symptom of an
-	# under-aerated tank, and it gives the player a clear visual cue to add
-	# aeration.
-	var target_y: float = preferred_y
+	# Drift toward this fish's vertical territory (home_y). Each fish has
+	# its own anchor (not just the species preferred_y) so 30 cory don't
+	# stack on the same plane. Pull strength scales with how far past
+	# home_y_radius the fish is, so close-to-layer doesn't fight wander but
+	# wrong-layer is firm.
+	#
+	# If dissolved O2 is low, override: every fish biases up toward the
+	# surface to gulp - the real-world "fish at the surface" symptom of an
+	# under-aerated tank.
+	var target_y: float = home_y
 	if sim != null and sim.get("dissolved_o2") != null:
 		var o2: float = float(sim.dissolved_o2)
 		if o2 < 0.4:
-			# Severity 0 at o2=0.4, severity 1 at o2=0.0 - smoothly biases the
-			# fish from its natural depth all the way up to just below the
-			# meniscus.
 			var severity: float = clampf((0.4 - o2) / 0.4, 0.0, 1.0)
 			var surface_y: float = float(sim.get("substrate_top_y")) + 5.0
-			# Fall back if sim doesn't expose surface; surface_y above is a
-			# best-guess shifted from substrate.
-			target_y = lerpf(preferred_y, surface_y, severity)
-			# Low O2 raises stress, which tightens schooling AND raises
-			# breathing rate (we don't simulate gill rate explicitly but the
-			# stress field is read by the audio + behavior layers).
+			target_y = lerpf(home_y, surface_y, severity)
 			stress = clampf(stress + dt * severity * 0.05, 0.0, 1.0)
 	var dy: float = target_y - position.y
-	desired.y += dy * 0.6
+	# Stronger Y pull beyond home_y_radius; gentle within it. Result: fish
+	# actively defend their water column layer instead of all sinking to
+	# the substrate at night.
+	var dy_outside: float = maxf(0.0, absf(dy) - home_y_radius)
+	desired.y += signf(dy) * (home_y_radius * 0.4 + dy_outside * 1.4)
 
 	# HOME-PULL. Each fish has its own home_x / home_z territory; if the fish
 	# wanders past home_radius, pull it back. This is the single biggest fix
@@ -906,13 +913,41 @@ func tick(dt: float, neighbors: Array, plants: Array, waste: Array,
 	# meanderers wander more, hoverers wander less.
 	desired += heading_offset * 0.5 * wander_strength
 
-	# Night-time dampening: at low daylight fish slow down and stop seeking.
-	# Real Walstad tanks: most species visibly sleep at night, hovering near
-	# plants or substrate. We scale the desired velocity by daylight.
+	# Diurnal / nocturnal / crepuscular activity. The generic "everyone slows
+	# at night" was wrong - real freshwater fish split by activity period.
+	# Each swim_pattern picks a different scaling of day-vs-night activity:
+	#   shuffle   nocturnal   - cory + loach are MOST active in the dark
+	#   school    diurnal     - tetras + danios doze at night, blast at day
+	#   shoal     diurnal     - guppies likewise
+	#   dart      crepuscular - killifish peak at dawn / dusk
+	#   cruise    crepuscular - betta patrols dawn / dusk most
+	#   meander   diurnal-mild  - puffer slow either way
+	#   hover     ambient     - angelfish steady throughout
 	if sim != null:
-		var dl: float = float(sim.daylight())
-		var night_factor: float = 0.25 + 0.75 * dl
-		desired *= night_factor
+		var dl: float = float(sim.daylight())  # 1=midday, 0=midnight
+		# Crepuscular factor: peaks at 0.5 daylight (transitions), drops at
+		# extremes. = 1 - (2*dl - 1)^2 maps to a smooth bell.
+		var crep: float = 1.0 - pow(2.0 * dl - 1.0, 2.0)
+		var activity: float = 1.0
+		match swim_pattern:
+			"shuffle":
+				# Nocturnal: 1.0 at night, 0.35 at noon.
+				activity = 0.35 + 0.65 * (1.0 - dl)
+			"school", "shoal":
+				# Diurnal: 1.0 at noon, 0.25 at midnight.
+				activity = 0.25 + 0.75 * dl
+			"dart", "cruise":
+				# Crepuscular: peaks at dawn/dusk, dips at extremes.
+				activity = 0.4 + 0.6 * crep
+			"meander":
+				# Mostly diurnal but mild range.
+				activity = 0.5 + 0.4 * dl
+			"hover":
+				# Steady; just a small night dip.
+				activity = 0.7 + 0.3 * dl
+			_:
+				activity = 0.3 + 0.7 * dl
+		desired *= activity
 
 	target_velocity = desired.limit_length(effective_max)
 	# Position + facing now updated in _process at render rate.
@@ -1305,6 +1340,10 @@ func produce_offspring_genome(partner: Fish) -> Dictionary:
 		"swim_pattern": (swim_pattern if randf() < 0.95 else partner.swim_pattern),
 		"home_x": clampf((home_x + partner.home_x) * 0.5 + randf_range(-2.0, 2.0),
 			-10.0, 10.0),
+		"home_y": clampf((home_y + partner.home_y) * 0.5 + randf_range(-0.4, 0.4),
+			0.5, 7.5),
+		"home_y_radius": clampf((home_y_radius + partner.home_y_radius) * 0.5
+			+ randf_range(-0.12, 0.12), 0.3, 2.5),
 		"home_z": clampf((home_z + partner.home_z) * 0.5 + randf_range(-2.0, 2.0),
 			-8.0, 8.0),
 		"home_radius": clampf((home_radius + partner.home_radius) * 0.5
