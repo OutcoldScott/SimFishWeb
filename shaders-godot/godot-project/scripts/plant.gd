@@ -526,12 +526,13 @@ func _tick_flowering(dt: float) -> void:
 				flower_stage = FlowerStage.OPENING
 				_flower_timer = 0.0
 				_flower_open_frac = 0.0
-				# Clear bud voxels and build opening flower.
+				# Clear bud voxels and build the flower meshes once.
 				_clear_bloom()
+				_build_flower_meshes_once()
 		FlowerStage.OPENING:
 			# Open over 4 seconds.
 			_flower_open_frac = clampf(_flower_timer / 4.0, 0.0, 1.0)
-			_rebuild_flower_at_frac(_flower_open_frac)
+			LeafShapes.update_flower(bloom_voxels, 5, _flower_open_frac)
 			if _flower_timer > 4.0:
 				flower_stage = FlowerStage.MATURE
 				_flower_timer = 0.0
@@ -564,12 +565,11 @@ func _tick_flowering(dt: float) -> void:
 				has_flower = false
 
 
-func _rebuild_flower_at_frac(frac: float) -> void:
-	_clear_bloom()
+func _build_flower_meshes_once() -> void:
 	if _flower_node == null or not is_instance_valid(_flower_node):
 		return
 	var flower_voxels: Array = LeafShapes.build_flower(
-		_flower_petal_color, _flower_center_color, 5, frac)
+		_flower_petal_color, _flower_center_color, 5, 0.0)
 	for v in flower_voxels:
 		_flower_node.add_child(v)
 		bloom_voxels.append(v)

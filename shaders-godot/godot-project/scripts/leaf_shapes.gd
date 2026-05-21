@@ -314,6 +314,23 @@ static func build_flower(petal_color: Color, center_color: Color,
 	return nodes
 
 
+static func update_flower(nodes: Array, n_petals: int, open_frac: float) -> void:
+	if nodes.size() < n_petals + 1:
+		return
+	for i in n_petals:
+		var angle: float = float(i) / float(n_petals) * TAU
+		var spread: float = open_frac * VOXEL_SIZE * 0.85
+		var petal: Node3D = nodes[i + 1] # 0 is center
+		if is_instance_valid(petal):
+			petal.position = Vector3(
+				cos(angle) * spread,
+				VOXEL_SIZE * 0.05 - open_frac * VOXEL_SIZE * 0.15,
+				sin(angle) * spread,
+			)
+			petal.rotation.z = cos(angle) * open_frac * 0.4
+			petal.rotation.x = sin(angle) * open_frac * 0.4
+
+
 # ---- Seed pod ----
 # Darkened, slightly larger than a bud. Precursor to seed release.
 static func build_seed_pod(color: Color) -> Array:

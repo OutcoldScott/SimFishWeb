@@ -60,6 +60,8 @@ var nibble_cooldown: float = 0.0
 var target_plant: Plant = null
 var heading_offset: Vector3 = Vector3.ZERO  # personal randomness in schooling
 
+var _food_glow: OmniLight3D = null
+
 # ---- Body skeleton (heritable) ----
 # These augment the existing body_elongation / body_depth_factor / head_proportion
 # so the same skeleton can produce visually distinct silhouettes:
@@ -264,6 +266,13 @@ func _ready() -> void:
 	heading = Vector3(sin(theta), 0.0, -cos(theta))
 	_last_yaw = atan2(heading.x, -heading.z)
 	speed = 0.0
+	
+	_food_glow = OmniLight3D.new()
+	_food_glow.light_color = Color.WHITE
+	_food_glow.light_energy = 0.0
+	_food_glow.omni_range = 1.8
+	_food_glow.omni_attenuation = 2.0
+	add_child(_food_glow)
 
 
 # ---- Setup ----
@@ -631,9 +640,7 @@ func _build_body() -> void:
 
 func _add_voxel_to(parent: Node3D, pos: Vector3, size: Vector3, mat: Material) -> void:
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(size)
 	mi.position = pos
 	mi.material_override = mat
 	parent.add_child(mi)
@@ -645,9 +652,7 @@ func _make_mat(color: Color) -> ShaderMaterial:
 
 func _add_voxel(pos: Vector3, size: Vector3, mat: Material) -> void:
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(size)
 	mi.position = pos
 	mi.material_override = mat
 	add_child(mi)
@@ -840,15 +845,28 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			var to_w: Vector3 = best_w.global_position - position
 			if to_w.length() < 0.4:
 				events["eat_waste"] = best_w
-				hunger = maxf(0.0, hunger - 0.25)
-				energy = minf(1.0, energy + 0.06)
+				var is_food: bool = best_w.kind == 3
+				hunger = maxf(0.0, hunger - (0.50 if is_food else 0.25))
+				energy = minf(1.0, energy + (0.25 if is_food else 0.06))
+				if is_food:
+					# High-quality food revitalizes the fish and brings them "back to life".
+					age = maxf(0.0, age - max_age_s * 0.08) # -8% age
+					stress = 0.0
+					if maturity == MATURITY_SENESCENT and age < max_age_s:
+						maturity = MATURITY_ADULT
+					if _food_glow != null:
+						_food_glow.light_energy = 2.0
 			else:
 				var pull: float = 0.9
 				if best_w.kind == 3: # FOOD
-					pull = 1.9 # Intently swim to it
+					pull = 1.9
+					# Older fish try harder to get food!
+					var age_factor: float = clampf(age / max_age_s, 0.0, 1.2)
+					pull += age_factor * 1.5
+					
 					# Dart towards food and trigger a feeding frenzy!
 					if burst_remaining <= 0.0 and energy > 0.15 and randf() < 0.4:
-						burst_remaining = randf_range(0.4, 0.7)
+						burst_remaining = randf_range(0.4, 0.7) + (age_factor * 0.3)
 						# This fish bolting for food will spook/alert the school!
 						_startle_heading = to_w.normalized()
 						_startle_remaining = 0.5
@@ -1243,6 +1261,9 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 #
 # Fish can't slide sideways, can't 180° in place, and bank into yaw turns.
 func _process(dt: float) -> void:
+	if _food_glow != null and _food_glow.light_energy > 0.0:
+		_food_glow.light_energy = maxf(0.0, _food_glow.light_energy - dt * 1.5)
+		
 	if sim != null:
 		dt *= sim.time_scale
 		if dt <= 0.0:

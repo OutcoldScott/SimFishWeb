@@ -33,9 +33,7 @@ func _build_visual() -> void:
 	]
 	for i in positions.size():
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(0.04, 0.04, 0.04)
-		mi.mesh = bm
+		mi.mesh = VoxelMat.get_box(Vector3(0.06, 0.06, 0.06))
 		mi.position = positions[i]
 		mi.material_override = VoxelMat.make(c if (i & 1) == 0 else c2)
 		add_child(mi)

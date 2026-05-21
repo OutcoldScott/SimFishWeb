@@ -189,9 +189,7 @@ func _build_body() -> void:
 
 func _voxel(parent: Node3D, pos: Vector3, size: Vector3, mat: Material) -> void:
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(size)
 	mi.position = pos
 	mi.material_override = mat
 	parent.add_child(mi)
@@ -588,9 +586,7 @@ func _spawn_egg_cluster() -> void:
 	]
 	for i in positions.size():
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(v * 0.16, v * 0.16, v * 0.16)
-		mi.mesh = bm
+		mi.mesh = VoxelMat.get_box(Vector3(0.12, 0.12, 0.12))
 		mi.position = positions[i]
 		mi.material_override = VoxelMat.make(c_egg if (i & 1) == 0 else c_egg_dark)
 		_egg_cluster.add_child(mi)

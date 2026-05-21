@@ -45,9 +45,7 @@ func init(value: float, top_y: float, particle_kind: int = KIND_FISH) -> void:
 			voxel_size = 0.12
 			color = Color8(60, 45, 30)  # standard fish brown
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(voxel_size, voxel_size, voxel_size)
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(Vector3(voxel_size, voxel_size, voxel_size))
 	mi.material_override = VoxelMat.make(color)
 	add_child(mi)
 

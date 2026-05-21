@@ -163,9 +163,10 @@ func _tick_flower(dt: float) -> void:
 				_flower_stage = FlowerStage.OPENING
 				_flower_timer = 0.0
 				_flower_open_frac = 0.0
+				_build_flower_meshes()
 		FlowerStage.OPENING:
 			_flower_open_frac = clampf(_flower_timer / 5.0, 0.0, 1.0)
-			_rebuild_flower(_flower_open_frac)
+			_update_flower(_flower_open_frac)
 			if _flower_timer > 5.0:
 				_flower_stage = FlowerStage.FULL
 				_flower_timer = 0.0
@@ -185,43 +186,50 @@ func _tick_flower(dt: float) -> void:
 				_flower_stage = FlowerStage.NONE
 
 
-func _rebuild_flower(open_frac: float) -> void:
+func _build_flower_meshes() -> void:
 	_clear_flower()
 	var palette: Array[Color] = [
 		Color8(245, 220, 220),  # pale pink
 		Color8(255, 245, 220),  # ivory
 		Color8(245, 195, 100),  # gold center
 	]
-	# Petals fan outward as they open.
 	var n_petals: int = 6
 	for i in n_petals:
-		var angle: float = float(i) / float(n_petals) * TAU
-		var petal_spread: float = open_frac * VOXEL_SIZE * 0.9
 		var f := MeshInstance3D.new()
-		var fm := BoxMesh.new()
 		var petal_size: float = VOXEL_SIZE * (0.7 - float(i % 2) * 0.15)
-		fm.size = Vector3(petal_size, VOXEL_SIZE * 0.2, petal_size * 0.8)
-		f.mesh = fm
+		f.mesh = VoxelMat.get_box(Vector3(petal_size, VOXEL_SIZE * 0.2, petal_size * 0.8))
 		var petal_color: Color = palette[0] if i % 2 == 0 else palette[1]
 		f.material_override = _make_mat(petal_color)
-		f.position = Vector3(
-			cos(angle) * petal_spread,
-			VOXEL_SIZE * 0.35,
-			sin(angle) * petal_spread,
-		)
-		f.rotation.z = cos(angle) * open_frac * 0.3
-		f.rotation.x = sin(angle) * open_frac * 0.3
 		add_child(f)
 		_flower_nodes.append(f)
-	# Gold center.
+	
 	var center := MeshInstance3D.new()
-	var cm := BoxMesh.new()
-	cm.size = Vector3(VOXEL_SIZE * 0.4, VOXEL_SIZE * 0.25, VOXEL_SIZE * 0.4)
-	center.mesh = cm
+	center.mesh = VoxelMat.get_box(Vector3(VOXEL_SIZE * 0.4, VOXEL_SIZE * 0.25, VOXEL_SIZE * 0.4))
 	center.material_override = _make_mat(palette[2])
 	center.position = Vector3(0, VOXEL_SIZE * 0.4, 0)
 	add_child(center)
 	_flower_nodes.append(center)
+	
+	_update_flower(0.0)
+
+
+func _update_flower(open_frac: float) -> void:
+	var n_petals: int = 6
+	if _flower_nodes.size() < n_petals:
+		return
+	for i in n_petals:
+		var angle: float = float(i) / float(n_petals) * TAU
+		var petal_spread: float = open_frac * VOXEL_SIZE * 0.9
+		var f: Node3D = _flower_nodes[i]
+		if is_instance_valid(f):
+			f.position = Vector3(
+				cos(angle) * petal_spread,
+				VOXEL_SIZE * 0.35,
+				sin(angle) * petal_spread,
+			)
+			f.rotation.z = cos(angle) * open_frac * 0.3
+			f.rotation.x = sin(angle) * open_frac * 0.3
+	# Gold center is already handled by _build_flower_meshes
 
 
 func _clear_flower() -> void:

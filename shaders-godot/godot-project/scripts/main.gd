@@ -26,6 +26,16 @@ extends Node
 @onready var fish_store_panel: PanelContainer = $FishStorePanel
 @onready var aquascape_toggle: Button = $AquascapeToggle
 @onready var aquascape_palette: PanelContainer = $AquascapeToolPalette
+
+@onready var portal_viewport: SubViewport = $PortalViewport
+@onready var portal_camera: Camera3D = $PortalViewport/PortalCamera
+@onready var portal_container: Control = $PortalContainer
+@onready var portal_display: TextureRect = $PortalContainer/PortalDisplay
+@onready var portal_hint: Label = $PortalContainer/PortalHint
+@onready var portal_toggle: Button = $PortalToggle
+
+var _portal_open: bool = false
+var _portal_target: Node3D = null
 # The four tool buttons inside the palette - built procedurally in _ready
 # because we want one button per AQUASCAPE_TOOLS entry without locking
 # in a fixed scene tree.
@@ -129,6 +139,26 @@ func _ready() -> void:
 	if aquascape_toggle != null:
 		aquascape_toggle.pressed.connect(_toggle_aquascape)
 	_build_aquascape_palette()
+	
+	if portal_toggle != null:
+		portal_toggle.pressed.connect(_toggle_portal)
+	if portal_viewport != null and portal_display != null:
+		portal_display.texture = portal_viewport.get_texture()
+		portal_viewport.world_3d = sub_viewport.world_3d
+		portal_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+
+func _toggle_portal() -> void:
+	_portal_open = not _portal_open
+	if portal_container != null:
+		portal_container.visible = _portal_open
+	if portal_viewport != null:
+		portal_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if _portal_open else SubViewport.UPDATE_DISABLED
+	if not _portal_open:
+		_portal_target = null
+	if portal_hint != null:
+		portal_hint.visible = _portal_target == null
+	print("[vivarium] PiP portal %s" % ("OPEN" if _portal_open else "CLOSED"))
 
 
 func _restore_camera_state() -> void:
@@ -338,6 +368,27 @@ func _process(dt: float) -> void:
 		else:
 			target = target.lerp(_follow_target.global_position, clampf(dt * 3.0, 0.0, 1.0))
 			_apply_camera()
+			
+	# Portal cam: track the portal target
+	if _portal_open and _portal_target != null and portal_camera != null:
+		if not is_instance_valid(_portal_target):
+			_portal_target = null
+		else:
+			var pt_pos: Vector3 = _portal_target.global_position
+			var pt_fwd: Vector3 = Vector3.FORWARD
+			if _portal_target is Node3D and _portal_target.get("heading") != null:
+				pt_fwd = _portal_target.get("heading")
+			# Over the shoulder view
+			var cam_pos: Vector3 = pt_pos - pt_fwd * 0.8 + Vector3(0, 0.4, 0)
+			portal_camera.global_position = portal_camera.global_position.lerp(cam_pos, clampf(dt * 5.0, 0.0, 1.0))
+			# Look slightly ahead of the creature
+			var look_target: Vector3 = pt_pos + pt_fwd * 2.0
+			# Smoothly rotate to look
+			var target_transform = portal_camera.global_transform.looking_at(look_target, Vector3.UP)
+			portal_camera.global_transform = portal_camera.global_transform.interpolate_with(target_transform, clampf(dt * 5.0, 0.0, 1.0))
+			
+			if portal_hint != null and portal_hint.visible:
+				portal_hint.visible = false
 
 	# WASD pan target along view direction.
 	var fwd: Vector3 = (target - camera.global_position)
@@ -520,13 +571,16 @@ func _try_follow_click(screen_pos: Vector2) -> void:
 	var dir: Vector3 = camera.project_ray_normal(sv_pos)
 	# Find the closest Fish or Shrimp to the ray within reach.
 	var best: Node3D = null
-	var best_perp: float = 0.7
+	var best_perp: float = 1.2
 	var creatures: Array = []
 	if _sim != null:
 		for f in _sim.fish:
 			if is_instance_valid(f): creatures.append(f)
 		for s in _sim.shrimp:
 			if is_instance_valid(s): creatures.append(s)
+		if _sim.snails_root != null:
+			for sn in _sim.snails_root.get_children():
+				if is_instance_valid(sn): creatures.append(sn)
 	for c in creatures:
 		var n: Node3D = c
 		var to_n: Vector3 = n.global_position - origin
@@ -538,8 +592,12 @@ func _try_follow_click(screen_pos: Vector2) -> void:
 			best_perp = perp
 			best = n
 	if best != null:
-		_follow_target = best
-		print("[vivarium] following ", best.name)
+		if _portal_open:
+			_portal_target = best
+			print("[vivarium] portal tracking ", best.name)
+		else:
+			_follow_target = best
+			print("[vivarium] following ", best.name)
 
 
 # ---- Aquascape mode ----

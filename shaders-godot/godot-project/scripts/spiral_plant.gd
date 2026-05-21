@@ -44,7 +44,7 @@ func _grow_one() -> bool:
 	var leaf_root := Node3D.new()
 	var outward := Vector3(cos(theta), 0.0, sin(theta))
 	leaf_root.position = Vector3(0.0, float(idx) * height_step, 0.0) + outward * r
-	leaf_root.look_at(leaf_root.position + outward, Vector3.UP)
+	leaf_root.transform = leaf_root.transform.looking_at(leaf_root.position + outward, Vector3.UP)
 	
 	# Godot look_at makes local -Z point outward.
 	# Pitching by -X tilts the leaf (which grows along +Y) towards -Z (outward).

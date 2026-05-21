@@ -36,9 +36,7 @@ func _build_visual() -> void:
 	]
 	for i in positions.size():
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE)
-		mi.mesh = bm
+		mi.mesh = VoxelMat.get_box(Vector3(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE))
 		mi.position = positions[i]
 		mi.material_override = VoxelMat.make(egg_color if (i & 1) == 0 else egg_color_2)
 		_wobble_pivot.add_child(mi)

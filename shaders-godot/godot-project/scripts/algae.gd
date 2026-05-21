@@ -56,10 +56,7 @@ func tick(dt: float, conditions_favor: bool) -> bool:
 
 func _add_voxel(local_pos: Vector3, scale_factor: float) -> void:
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(VOXEL_SIZE * scale_factor, VOXEL_SIZE * scale_factor,
-		VOXEL_SIZE * scale_factor)
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(Vector3(VOXEL_SIZE * scale_factor, VOXEL_SIZE * scale_factor, VOXEL_SIZE * scale_factor))
 	# Slight per-voxel color variation so the cluster reads as organic
 	# rather than monolithic.
 	var shade: float = randf_range(-0.08, 0.08)

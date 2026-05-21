@@ -67,9 +67,7 @@ func _add_stalk_voxel() -> void:
 	var t_frac: float = float(i) / float(maxi(1, height_voxels - 1))
 	var lean_x: float = sin(t_frac * PI * 0.7) * lean_amplitude * t_frac
 	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(VOXEL_SIZE * 0.5, VOXEL_SIZE * 1.05, VOXEL_SIZE * 0.5)
-	mi.mesh = bm
+	mi.mesh = VoxelMat.get_box(Vector3(VOXEL_SIZE * 0.5, VOXEL_SIZE * 1.05, VOXEL_SIZE * 0.5))
 	mi.position = Vector3(lean_x, y, 0)
 	# New growth is slightly lighter.
 	var growth_color: Color = stalk_color.lightened(0.1) if _current_height > height_voxels * 0.7 else stalk_color
@@ -89,9 +87,7 @@ func _build_seed_head() -> void:
 		var t_frac: float = float(head_base_i + j) / float(maxi(1, height_voxels - 1))
 		var lean_x: float = sin(t_frac * PI * 0.7) * lean_amplitude * t_frac
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(VOXEL_SIZE * 1.1, VOXEL_SIZE * 0.9, VOXEL_SIZE * 1.1)
-		mi.mesh = bm
+		mi.mesh = VoxelMat.get_box(Vector3(VOXEL_SIZE * 1.1, VOXEL_SIZE * 0.9, VOXEL_SIZE * 1.1))
 		mi.position = Vector3(lean_x, y, 0)
 		# Top + bottom voxels of the head are slightly darker (tapered).
 		var col: Color = head_color
@@ -115,15 +111,12 @@ func _add_leaf_blade(leaf_index: int) -> void:
 	for j in blade_len:
 		var ly: float = float(j) * VOXEL_SIZE * 0.85
 		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		# Taper the blade: wider at base, thinner at tip.
 		var taper: float = 1.0 - float(j) / float(blade_len) * 0.5
-		bm.size = Vector3(
+		mi.mesh = VoxelMat.get_box(Vector3(
 			VOXEL_SIZE * 0.85 * taper,
 			VOXEL_SIZE * 0.7,
 			VOXEL_SIZE * 0.18,
-		)
-		mi.mesh = bm
+		))
 		mi.position = Vector3(0, ly, 0)
 		mi.material_override = _make_mat(leaf_color)
 		leaf_pivot.add_child(mi)
