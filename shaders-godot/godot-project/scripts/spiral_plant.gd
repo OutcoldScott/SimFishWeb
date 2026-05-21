@@ -25,14 +25,17 @@ func _grow_one() -> bool:
 	if current_height >= max_height:
 		return false
 	var idx: int = current_height
-	# Phyllotaxis: theta = idx * golden_angle, r = radius_step * sqrt(idx).
+	# Phyllotaxis: theta = idx * golden_angle
 	var theta: float = float(idx) * GOLDEN_ANGLE
-	var r: float = minf(radius_step * sqrt(float(idx) + 1.0), radius_cap)
 	
 	# Color ramp: outer / older leaves (low idx) are deeper green, inner / new
 	# leaves (high idx, central rosette) are brighter.
 	var rel: float = float(idx) / float(maxi(1, max_height - 1))
 	var ramp: Array = ramp_override if ramp_override.size() == 6 else PLANT_RAMP
+	
+	# Taper the radius as it gets taller so the plant stays very tight at the top
+	var taper: float = 1.0 - (rel * 0.75)
+	var r: float = minf(radius_step * sqrt(float(idx) + 1.0), radius_cap) * taper
 	
 	# Tight vertical leaves.
 	var leaf_len: int = clampi(2 + int((1.0 - rel) * 2.0), 2, 4)

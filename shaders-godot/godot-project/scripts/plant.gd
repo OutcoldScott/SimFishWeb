@@ -403,8 +403,8 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 	var nutrient_mult: float = clampf(
 		(available - substrate.NUTRIENT_BASELINE) / 0.4, 0.0, 1.0)
 	# Health trends toward nutrient satisfaction, with slow decay when starved.
-	var target_health: float = 0.3 + 0.7 * nutrient_mult
-	health = lerpf(health, target_health, dt * 0.1)
+	var target_health: float = 0.35 + 0.65 * nutrient_mult
+	health = lerpf(health, target_health, dt * 0.03) # slower health changes
 	_health_smooth = lerpf(_health_smooth, health, dt * 0.05)
 
 	# ---- Deficiency symptoms ----
@@ -414,9 +414,9 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 		_begin_dying()
 
 	# ---- Starvation → leaf shedding ----
-	if _health_smooth < 0.5:
+	if _health_smooth < 0.45:
 		_starvation_timer += dt
-		if _starvation_timer > 8.0 and not _leaf_nodes.is_empty():
+		if _starvation_timer > 25.0 and not _leaf_nodes.is_empty():
 			_starvation_timer = 0.0
 			_shed_oldest_leaf()
 
