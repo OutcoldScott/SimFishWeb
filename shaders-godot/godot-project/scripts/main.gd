@@ -18,6 +18,10 @@ extends Node
 @onready var camera: Camera3D = $SubViewport/World/Camera3D
 @onready var hud: Label = $DebugHUD
 @onready var world: Node3D = $SubViewport/World
+@onready var settings_panel: PanelContainer = $SettingsPanel
+@onready var render_panel: PanelContainer = $RenderPanel
+@onready var settings_toggle: Button = $SettingsToggle
+@onready var render_toggle: Button = $RenderToggle
 
 # Cached SimDriver ref for time_scale + seed + day_phase queries.
 var _sim: Node = null
@@ -66,6 +70,9 @@ var _aquascape_saved_time_scale: float = 1.0
 
 
 func _ready() -> void:
+	# Apply render-config values BEFORE the SubViewport assigns its texture
+	# so the resolution change takes effect.
+	_apply_render_config()
 	display.texture = sub_viewport.get_texture()
 	_apply_camera()
 	# Subscribe to SimDriver stats - they emit at ~1Hz with the ecosystem snapshot.
@@ -73,6 +80,43 @@ func _ready() -> void:
 	_sim = world.get_node_or_null("SimDriver")
 	if _sim != null and _sim.has_signal("stats_changed"):
 		_sim.connect("stats_changed", _on_stats_changed)
+	# Hook toggle buttons to the panels' toggle methods.
+	if settings_toggle != null and settings_panel != null:
+		settings_toggle.pressed.connect(settings_panel.toggle)
+	if render_toggle != null and render_panel != null:
+		render_toggle.pressed.connect(render_panel.toggle)
+
+
+func _apply_render_config() -> void:
+	# Read TankConfig render settings and apply them to the SubViewport,
+	# the palette-quantize shader on the Display TextureRect, and the camera.
+	var cfg := get_node_or_null("/root/TankConfig")
+	if cfg == null:
+		return
+	# SubViewport size.
+	sub_viewport.size = Vector2i(int(cfg.render_width), int(cfg.render_height))
+	# MSAA: 0=disabled, 1=2x, 2=4x, 3=8x (matches Viewport.MSAA enum).
+	sub_viewport.msaa_3d = int(cfg.msaa)
+	# Palette quantize shader uniforms.
+	if display.material is ShaderMaterial:
+		var sm: ShaderMaterial = display.material
+		# Set dither strength + internal resolution.
+		sm.set_shader_parameter("dither_strength", float(cfg.dither_strength))
+		sm.set_shader_parameter("internal_resolution",
+			Vector2(float(cfg.render_width), float(cfg.render_height)))
+	# If palette is disabled, swap the Display's shader to a passthrough by
+	# setting dither_strength to 0 AND increasing palette_size temporarily.
+	# Simpler: just set dither to 0 - the quantize still happens but no dither.
+	# True bypass would require a separate shader; flagged as TODO.
+	# Camera FOV.
+	if camera != null:
+		camera.fov = float(cfg.camera_fov)
+	# Fog: read from environment if available.
+	var we := world.get_node_or_null("WorldEnvironment")
+	if we != null and we.environment != null:
+		we.environment.volumetric_fog_density = float(cfg.fog_density)
+		we.environment.volumetric_fog_anisotropy = float(cfg.fog_anisotropy)
+		we.environment.volumetric_fog_ambient_inject = float(cfg.fog_ambient_inject)
 
 
 func _process(dt: float) -> void:

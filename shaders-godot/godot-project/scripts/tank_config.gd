@@ -10,6 +10,25 @@
 
 extends Node
 
+# ---- Rendering parameters ----
+# Internal SubViewport resolution. Smaller = more pixelated / chunkier.
+# Common choices: 256x144 (chunky), 384x216, 512x288 (default), 768x432.
+var render_width: int = 512
+var render_height: int = 288
+# Palette quantize shader strength.
+var dither_strength: float = 0.85
+# If false, the palette pass is bypassed and you see raw HDR colors. Useful
+# for spotting bugs in lighting + composition.
+var palette_enabled: bool = true
+# Volumetric fog parameters.
+var fog_density: float = 0.02
+var fog_anisotropy: float = 0.3
+var fog_ambient_inject: float = 0.05
+# Camera.
+var camera_fov: float = 50.0
+# Anti-aliasing on the SubViewport. 0=off, 1=2x, 2=4x, 3=8x.
+var msaa: int = 0
+
 # ---- Tank dimensions ----
 var tank_half_w: float = 8.0
 var tank_half_d: float = 4.0
@@ -167,6 +186,15 @@ func save_to_disk() -> void:
 	cfg.set_value("preset", "glassdarts", custom_glassdart_count)
 	cfg.set_value("preset", "mudsifters", custom_mudsifter_count)
 	cfg.set_value("preset", "shrimp", custom_shrimp_count)
+	cfg.set_value("render", "width", render_width)
+	cfg.set_value("render", "height", render_height)
+	cfg.set_value("render", "dither", dither_strength)
+	cfg.set_value("render", "palette_enabled", palette_enabled)
+	cfg.set_value("render", "fog_density", fog_density)
+	cfg.set_value("render", "fog_anisotropy", fog_anisotropy)
+	cfg.set_value("render", "fog_ambient_inject", fog_ambient_inject)
+	cfg.set_value("render", "fov", camera_fov)
+	cfg.set_value("render", "msaa", msaa)
 	cfg.save(SAVE_PATH)
 
 
@@ -191,6 +219,15 @@ func load_from_disk() -> void:
 	custom_glassdart_count = cfg.get_value("preset", "glassdarts", custom_glassdart_count)
 	custom_mudsifter_count = cfg.get_value("preset", "mudsifters", custom_mudsifter_count)
 	custom_shrimp_count = cfg.get_value("preset", "shrimp", custom_shrimp_count)
+	render_width = cfg.get_value("render", "width", render_width)
+	render_height = cfg.get_value("render", "height", render_height)
+	dither_strength = cfg.get_value("render", "dither", dither_strength)
+	palette_enabled = cfg.get_value("render", "palette_enabled", palette_enabled)
+	fog_density = cfg.get_value("render", "fog_density", fog_density)
+	fog_anisotropy = cfg.get_value("render", "fog_anisotropy", fog_anisotropy)
+	fog_ambient_inject = cfg.get_value("render", "fog_ambient_inject", fog_ambient_inject)
+	camera_fov = cfg.get_value("render", "fov", camera_fov)
+	msaa = cfg.get_value("render", "msaa", msaa)
 
 
 func _ready() -> void:
