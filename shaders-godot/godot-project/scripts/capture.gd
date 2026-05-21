@@ -15,7 +15,7 @@ func _ready() -> void:
     var cam: Camera3D = $SubViewport/World/Camera3D
     cam.look_at(Vector3(0, 3.0, 0), Vector3.UP)
     cam.make_current()
-    print("[capture] camera current=", cam.current, " viewport size=", sub_viewport.size)
+    print_verbose("[capture] camera current=", cam.current, " viewport size=", sub_viewport.size)
 
 
 func _process(_dt: float) -> void:
@@ -27,7 +27,7 @@ func _process(_dt: float) -> void:
         # Sample a few pixels to verify the SubViewport contains actual 3D content.
         var center: Color = sub_img.get_pixel(sub_img.get_width() / 2, sub_img.get_height() / 2)
         var bottom: Color = sub_img.get_pixel(sub_img.get_width() / 2, int(sub_img.get_height() * 0.85))
-        print("[capture] subviewport size=", sub_img.get_size(),
+        print_verbose("[capture] subviewport size=", sub_img.get_size(),
               " center=", center, " bottom=", bottom)
         sub_img.save_png("res://capture_raw.png")
 
@@ -37,5 +37,5 @@ func _process(_dt: float) -> void:
         # has the shader applied.
         var root_img: Image = get_viewport().get_texture().get_image()
         root_img.save_png("res://capture_quantized.png")
-        print("captured: capture_raw.png, capture_quantized.png")
+        print_verbose("captured: capture_raw.png, capture_quantized.png")
         get_tree().quit()

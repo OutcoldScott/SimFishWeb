@@ -19,6 +19,18 @@ const MATURITY_JUVENILE := 1
 const MATURITY_ADULT := 2
 const MATURITY_SENESCENT := 3
 
+# ---- Food reward tuning ----
+# Hunger drop and energy gain per bite. FOOD_* applies to high-quality food
+# pellets (kind == 3); WASTE_* applies to scavenged regular waste particles.
+const FOOD_HUNGER_DELTA: float = 0.50
+const FOOD_ENERGY_DELTA: float = 0.25
+const WASTE_HUNGER_DELTA: float = 0.25
+const WASTE_ENERGY_DELTA: float = 0.06
+# Eating high-quality food rewinds age by this fraction of max_age_s ("back to life").
+const FOOD_AGE_REVIVAL_FRAC: float = 0.08
+# OmniLight3D energy applied to the food-glow halo on a food bite.
+const FOOD_GLOW_ENERGY: float = 2.0
+
 # Behavior modes - what the fish is doing right now. Visible in the HUD if we
 # add per-fish debug labels.
 enum Mode { CRUISE, FORAGE, COURT, SPAWN, FLEE, REST }
@@ -83,6 +95,29 @@ var ventral_profile: float = 1.0
 var back_arch: float = 1.0
 var tail_shape: int = 0
 var armor_plates: bool = false
+
+# ---- Extended silhouette traits (heritable) ----
+# These let species read as themselves at a glance:
+#  - anal_fin_length_factor   matches dorsal_height_factor for angelfish /
+#                             betta where the anal fin is a long trailing
+#                             mirror of the dorsal. 0.5 = vestigial nub
+#                             (default), 1.5+ = full trailing mirror.
+#  - adipose_fin              small extra dorsal nub between dorsal + tail.
+#                             Defines the tetra silhouette (and a few
+#                             other catfish-relatives).
+#  - snout_pointed            adds an extra forward voxel to the head so
+#                             cichlid-style faces (angelfish) read as
+#                             pointed instead of round-blunt.
+#  - body_shape               coarse silhouette branch on top of the
+#                             elongation / depth scalars:
+#                               "fusiform"      torpedo (default)
+#                               "compressed"    tall thin disc (angelfish)
+#                               "globiform"     spherical (puffer)
+#                               "anguilliform"  eel-like (loach)
+var anal_fin_length_factor: float = 0.5
+var adipose_fin: bool = false
+var snout_pointed: bool = false
+var body_shape: String = "fusiform"
 
 # ---- Food preferences (per-species, not heritable) ----
 # Walstad ecosystem wiring: which species hunt which prey beyond the
@@ -166,6 +201,21 @@ var current_mode: Mode = Mode.CRUISE
 var partner: Fish = null
 var court_timer: float = 0.0
 const COURT_DURATION: float = 6.0  # sim seconds of swimming together before spawn
+
+# Livebearer flag (genome-driven). Real guppies, mollies, platies are
+# viviparous - females release free-swimming fry instead of laying eggs.
+# sim_driver._lay_eggs branches on this so the breeding event skips the
+# FishEgg pipeline and spawns juveniles directly at the mother.
+var is_livebearer: bool = false
+
+# Egg-guarding / brooding state. Set on both parents post-spawn for
+# pair-bonding species (currently swim_pattern == "hover": angelfish).
+# While brooding_remaining > 0 the fish hovers near brooding_at and
+# chases the nearest non-partner intruder within range.
+var brooding_at: Vector3 = Vector3.ZERO
+var brooding_remaining: float = 0.0
+const BROODING_DURATION: float = 90.0    # ~1.5 sim minutes of guarding
+const BROODING_RADIUS: float = 1.2       # how far intruders trip a chase
 
 # Burst mode: when fleeing or chasing food, fish can momentarily exceed
 # max_speed by burst_multiplier. Drains energy faster.
@@ -332,6 +382,12 @@ func init_genome(genome: Dictionary) -> void:
 	back_arch = float(genome.get("back_arch", back_arch))
 	tail_shape = int(genome.get("tail_shape", tail_shape))
 	armor_plates = bool(genome.get("armor_plates", armor_plates))
+	is_livebearer = bool(genome.get("is_livebearer", is_livebearer))
+	anal_fin_length_factor = float(genome.get("anal_fin_length_factor",
+		anal_fin_length_factor))
+	adipose_fin = bool(genome.get("adipose_fin", adipose_fin))
+	snout_pointed = bool(genome.get("snout_pointed", snout_pointed))
+	body_shape = String(genome.get("body_shape", body_shape))
 	# Food preferences (species-level, not heritable).
 	snail_predator = bool(genome.get("snail_predator", snail_predator))
 	algae_grazer = bool(genome.get("algae_grazer", algae_grazer))
@@ -471,6 +527,16 @@ func _build_body() -> void:
 	var mouth_y: float = -v * 0.25 * hp * float(mouth_orientation) - v * 0.1 * hp
 	_add_voxel_to(head, Vector3(0, mouth_y, -3.0 * v),
 		Vector3(v * 0.35 * hp, v * 0.2 * hp, v * 0.2 * hp), mat_belly)
+	# Pointed snout: cichlid-style face (angelfish). Adds a slim forward
+	# voxel ahead of the mouth so the profile reads as wedge / pointed
+	# instead of blunt-round. Skipped for blunt species (puffer, cory).
+	if snout_pointed:
+		_add_voxel_to(head, Vector3(0, mouth_y * 0.4, -3.35 * v),
+			Vector3(v * 0.32 * hp, v * 0.35 * hp, v * 0.45 * hp), mat_body)
+		# Upper jaw highlight - lighter top of the snout reads as the
+		# forehead carrying forward.
+		_add_voxel_to(head, Vector3(0, mouth_y * 0.4 + v * 0.18 * hp, -3.3 * v),
+			Vector3(v * 0.22 * hp, v * 0.12 * hp, v * 0.35 * hp), mat_top)
 	# Barbels - catfish/loach whiskers. Two pairs of tiny dark voxels under
 	# the mouth, angled forward + down. Only drawn if has_barbels.
 	if has_barbels:
@@ -506,6 +572,59 @@ func _build_body() -> void:
 		# Belly accent - pushed down by ventral_profile.
 		_add_voxel_to(_body_mid_pivot, Vector3(0, -bs * 0.5 * ventral_profile, bz),
 			Vector3(bs * 0.55, v * 0.25, v), mat_belly)
+	# Body-shape silhouette pass. Adds extra voxels ON TOP of the standard
+	# seg_widths skeleton to push the silhouette into one of four classic
+	# fish shapes:
+	#   compressed   tall narrow disc (angelfish - vertical extension
+	#                voxels above + below the body center)
+	#   globiform    spherical (puffer - wraparound voxels filling out
+	#                the front/rear hemispheres into a ball)
+	#   anguilliform eel-like (loach - extra tail-ward filler so the
+	#                long body reads continuous, not segmented)
+	#   fusiform     default torpedo - no extras (do nothing)
+	match body_shape:
+		"compressed":
+			# Disc body: stack tall thin voxels above and below the mid
+			# segments. Combined with body_depth_factor >= 1.7 this
+			# produces the angelfish's iconic flat silhouette.
+			for i in seg_widths.size():
+				var bw_c: float = seg_widths[i]
+				var bz_c: float = i * v
+				_add_voxel_to(_body_mid_pivot,
+					Vector3(0, v * (0.85 * back_arch + 0.25), bz_c),
+					Vector3(v * bw_c * 0.7, v * 0.6, v * 0.85), mat_top)
+				_add_voxel_to(_body_mid_pivot,
+					Vector3(0, -v * (0.85 * ventral_profile + 0.20), bz_c),
+					Vector3(v * bw_c * 0.7, v * 0.55, v * 0.85), mat_belly)
+		"globiform":
+			# Sphere body: add front + rear cap voxels plus lateral
+			# bulge voxels so the puffer reads round instead of as 3
+			# stacked boxes.
+			_add_voxel_to(_body_mid_pivot, Vector3(0, 0, -v * 0.8),
+				Vector3(v * 1.35, v * 1.25, v * 0.9), mat_body)
+			_add_voxel_to(_body_mid_pivot, Vector3(0, 0, v * 2.6),
+				Vector3(v * 1.15, v * 1.05, v * 0.8), mat_body)
+			# Top + bottom caps.
+			_add_voxel_to(_body_mid_pivot, Vector3(0, v * 0.85, v * 1.0),
+				Vector3(v * 1.1, v * 0.35, v * 1.7), mat_top)
+			_add_voxel_to(_body_mid_pivot, Vector3(0, -v * 0.85, v * 1.0),
+				Vector3(v * 1.1, v * 0.35, v * 1.7), mat_belly)
+			# Lateral cheeks for that puffed-out width.
+			_add_voxel_to(_body_mid_pivot, Vector3(v * 0.9, 0, v * 1.0),
+				Vector3(v * 0.3, v * 1.0, v * 1.7), mat_body)
+			_add_voxel_to(_body_mid_pivot, Vector3(-v * 0.9, 0, v * 1.0),
+				Vector3(v * 0.3, v * 1.0, v * 1.7), mat_body)
+		"anguilliform":
+			# Eel-like: extend the body further rearward with two extra
+			# tail-ward segments so the loach silhouette reads as a
+			# continuous tube, not 3 boxes + a tail.
+			_add_voxel_to(_body_mid_pivot, Vector3(0, 0, v * 3.2),
+				Vector3(v * 0.85, v * 0.85, v), mat_body)
+			_add_voxel_to(_body_mid_pivot, Vector3(0, 0, v * 4.2),
+				Vector3(v * 0.7, v * 0.7, v), mat_body)
+		_:
+			pass  # fusiform - no extra voxels
+
 	# Armor plates: cory-style lateral plating. Drawn as 4 thin dark vertical
 	# bars across the lateral midline. Stacks ON TOP of pattern_type, so a
 	# cory with vertical bars + armor reads as a peppered fish in armor.
@@ -559,13 +678,30 @@ func _build_body() -> void:
 		Vector3(v * 0.15, v * 0.4 * dh, v * 1.2), mat_fin)
 	_add_voxel_to(_dorsal_pivot, Vector3(0, v * 0.45 * dh, v * 0.2),
 		Vector3(v * 0.12, v * 0.25 * dh, v * 0.6), mat_fin)
-	# Anal fin (bottom) - smaller mirror of dorsal, also pivoted.
+	# Anal fin (bottom). Default = small nub (anal_fin_length_factor < 1.0).
+	# When the factor is high, build a long trailing fin that mirrors the
+	# dorsal - this is what defines the angelfish + betta silhouette where
+	# the dorsal and anal fins extend symmetrically into long fans.
 	_anal_pivot = Node3D.new()
 	_anal_pivot.name = "AnalPivot"
 	_anal_pivot.position = Vector3(0, -v * 0.65, v * 1.6)
 	_body_mid_pivot.add_child(_anal_pivot)
-	_add_voxel_to(_anal_pivot, Vector3(0, -v * 0.2, 0),
-		Vector3(v * 0.12, v * 0.35, v * 0.7), mat_fin)
+	var afl: float = anal_fin_length_factor
+	_add_voxel_to(_anal_pivot, Vector3(0, -v * 0.2 * afl, 0),
+		Vector3(v * 0.12, v * 0.35 * afl, v * 0.7), mat_fin)
+	if afl >= 1.0:
+		# Trailing voxels stretch BACK along Z, sweeping downward with the
+		# magnitude of afl. Two segments give the fin a tapered profile.
+		_add_voxel_to(_anal_pivot, Vector3(0, -v * 0.45 * afl, v * 0.3),
+			Vector3(v * 0.11, v * 0.4 * afl, v * 0.65), mat_fin)
+		_add_voxel_to(_anal_pivot, Vector3(0, -v * 0.85 * afl, v * 0.65),
+			Vector3(v * 0.10, v * 0.45 * afl, v * 0.5), mat_fin)
+	# Adipose fin: small lobe between dorsal and tail, on the dorsal line.
+	# Defines the tetra silhouette (also present on catfish, salmonids,
+	# corydoras relatives). Tiny - just a marker voxel.
+	if adipose_fin:
+		_add_voxel_to(_body_mid_pivot, Vector3(0, v * 0.72, v * 2.2),
+			Vector3(v * 0.10, v * 0.25, v * 0.4), mat_fin)
 	# Pectoral fins on both sides - each gets its own pivot so they can
 	# flutter independently like a real fish's hovering stroke.
 	_pec_right_pivot = Node3D.new()
@@ -746,6 +882,72 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 	# Tier 0: wall avoidance always runs (additive).
 	desired += _wall_avoid(world_bounds) * 3.0
 
+	# Tier 0.3: EGG-GUARDING / BROODING. Pair-bonding species (currently
+	# the "hover" pattern, i.e. angelfish) stay near the egg cluster for
+	# BROODING_DURATION after spawning. Behavior:
+	#   - Hover within ~0.4u of brooding_at.
+	#   - Chase the nearest non-partner intruder within BROODING_RADIUS,
+	#     producing visible territorial defense.
+	#   - Other tiers (food, partner-seeking) are suppressed via early
+	#     return so the parents don't wander off mid-watch.
+	if brooding_remaining > 0.0:
+		brooding_remaining = maxf(0.0, brooding_remaining - dt)
+		current_mode = Mode.COURT  # closest mode we have to "guarding"
+		# Hold position at the nest. Damp velocity so the fish actually
+		# settles instead of orbiting.
+		var to_nest: Vector3 = brooding_at - position
+		desired += to_nest * 1.5
+		# Find the closest non-partner intruder to chase off.
+		var threat: Fish = null
+		var threat_d2: float = BROODING_RADIUS * BROODING_RADIUS
+		for n in neighbors:
+			if not (n is Fish):
+				continue
+			var nf: Fish = n
+			if nf == partner or nf == self:
+				continue
+			if nf.maturity == MATURITY_FRY:
+				continue
+			var d2: float = nf.position.distance_squared_to(position)
+			if d2 < threat_d2:
+				threat_d2 = d2
+				threat = nf
+		if threat != null:
+			var to_t: Vector3 = threat.position - position
+			if to_t.length_squared() > 1e-4:
+				desired += to_t.normalized() * effective_max * 1.8
+				if burst_remaining < 0.25:
+					burst_remaining = 0.25
+		target_velocity = desired.limit_length(effective_max)
+		return events
+
+	# Tier 0.4: FRY FLEE FROM ADULT CONSPECIFICS. Real fry instinctively dart
+	# away from larger same-species fish that might cannibalize them. We
+	# add a strong repulsion vector from any non-fry conspecific within
+	# ~1.5 units. Burst is triggered so the flee reads as a panic dart
+	# rather than steady drift.
+	if maturity == MATURITY_FRY:
+		var flee_threat: Fish = null
+		var flee_d2_best: float = 2.25  # 1.5^2
+		for n in neighbors:
+			if not (n is Fish):
+				continue
+			var nf: Fish = n
+			if nf.species != species or nf.maturity == MATURITY_FRY:
+				continue
+			var d2: float = nf.position.distance_squared_to(position)
+			if d2 < flee_d2_best:
+				flee_d2_best = d2
+				flee_threat = nf
+		if flee_threat != null:
+			current_mode = Mode.FLEE
+			var away: Vector3 = position - flee_threat.position
+			if away.length_squared() > 1e-4:
+				desired += away.normalized() * effective_max * 2.0
+				if burst_remaining < 0.3:
+					burst_remaining = 0.3
+				stress = clampf(stress + 0.15, 0.0, 1.0)
+
 	# Tier 0.5: TERRITORIAL DEFENSE. swim_pattern "hover" species (angelfish)
 	# claim a small territory around home_x/home_z and chase off conspecifics
 	# OR similar-sized neighbors that enter it. Real angelfish behaviour - a
@@ -846,16 +1048,16 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			if to_w.length() < 0.4:
 				events["eat_waste"] = best_w
 				var is_food: bool = best_w.kind == 3
-				hunger = maxf(0.0, hunger - (0.50 if is_food else 0.25))
-				energy = minf(1.0, energy + (0.25 if is_food else 0.06))
+				hunger = maxf(0.0, hunger - (FOOD_HUNGER_DELTA if is_food else WASTE_HUNGER_DELTA))
+				energy = minf(1.0, energy + (FOOD_ENERGY_DELTA if is_food else WASTE_ENERGY_DELTA))
 				if is_food:
 					# High-quality food revitalizes the fish and brings them "back to life".
-					age = maxf(0.0, age - max_age_s * 0.08) # -8% age
+					age = maxf(0.0, age - max_age_s * FOOD_AGE_REVIVAL_FRAC)
 					stress = 0.0
 					if maturity == MATURITY_SENESCENT and age < max_age_s:
 						maturity = MATURITY_ADULT
 					if _food_glow != null:
-						_food_glow.light_energy = 2.0
+						_food_glow.light_energy = FOOD_GLOW_ENERGY
 			else:
 				var pull: float = 0.9
 				if best_w.kind == 3: # FOOD
@@ -1047,7 +1249,15 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 	var current_fish_pop: int = 0
 	if sim != null:
 		current_fish_pop = sim.fish.size() + sim.eggs.size()
-	if maturity == MATURITY_ADULT and breed_cooldown <= 0.0 and partner == null \
+	# Livebearer males don't initiate courtship. Real guppy / platy
+	# females cruise to sheltered cover and the male follows her there;
+	# we approximate that here by letting only the female (sex == 1) of
+	# a livebearer species call _find_breeding_partner. The male can
+	# still ACCEPT a bond when a female pairs with him (handled by the
+	# `candidate.partner = self` line below).
+	var female_initiator_only: bool = is_livebearer and sex == 0
+	if not female_initiator_only and maturity == MATURITY_ADULT \
+			and breed_cooldown <= 0.0 and partner == null \
 			and hunger < 0.5 and energy > 0.65 and stress < 0.4 \
 			and current_fish_pop < FISH_POPULATION_CAP:
 		var candidate: Fish = _find_breeding_partner(neighbors)
@@ -1277,6 +1487,13 @@ func _process(dt: float) -> void:
 		target_dir = target_velocity.normalized()
 	if _sift_timer > 0.0:
 		target_spd *= 0.15
+	# Senescent fish swim noticeably slower - tired old animals drift
+	# instead of darting. Stress also damps speed (chronically distressed
+	# fish move less, hold still in cover).
+	if maturity == MATURITY_SENESCENT:
+		target_spd *= 0.4
+	elif stress > 0.6:
+		target_spd *= 0.75
 
 	# ---- Rotate heading toward target_dir, bounded by max_turn_rate ----
 	var angle: float = heading.angle_to(target_dir)
@@ -1334,6 +1551,15 @@ func _process(dt: float) -> void:
 			pitch_target = 0.55
 		elif _courtship_flare:
 			pitch_target = -0.12   # nose slightly up for the parade swim
+		elif maturity == MATURITY_SENESCENT:
+			# Old fish lose buoyancy control - nose tips downward as they
+			# drift toward the substrate, a recognisable "dying fish" pose
+			# before queue_free. Stronger tilt than the stress slump below.
+			pitch_target = 0.22
+		elif stress > 0.6:
+			# Chronic stress: shoulders-down body language. Subtle compared
+			# to sifting / dying so the player reads it as mood, not action.
+			pitch_target = 0.08
 		_bank_pivot.rotation.x = lerpf(_bank_pivot.rotation.x, pitch_target,
 			clampf(dt * 4.0, 0.0, 1.0))
 
@@ -1569,6 +1795,7 @@ func _find_nearest_tall_plant(plants: Array, max_dist: float, min_biomass: int) 
 
 
 # Used by SimDriver when this fish breeds with a partner.
+@warning_ignore("shadowed_variable")
 func produce_offspring_genome(partner: Fish) -> Dictionary:
 	# Mix parental traits with moderate mutation so color + size drift is
 	# visible across 3-5 generations. Heritable: color, accent color,
@@ -1683,5 +1910,16 @@ func produce_offspring_genome(partner: Fish) -> Dictionary:
 		# Food preferences inherited as-is (species-defining, not really mutable).
 		"snail_predator": snail_predator,
 		"algae_grazer": algae_grazer,
+		# Livebearer trait is species-locked too - inherited identically.
+		"is_livebearer": is_livebearer,
+		# Silhouette traits. anal_fin_length_factor drifts continuously like
+		# fin_length_factor; the booleans + body_shape are species-locked
+		# (no realistic mutation path on a 4-5 generation timescale).
+		"anal_fin_length_factor": clampf(
+			(anal_fin_length_factor + partner.anal_fin_length_factor) * 0.5
+			+ randf_range(-0.10, 0.10), 0.3, 2.0),
+		"adipose_fin": adipose_fin,
+		"snout_pointed": snout_pointed,
+		"body_shape": body_shape,
 	}
 	return g

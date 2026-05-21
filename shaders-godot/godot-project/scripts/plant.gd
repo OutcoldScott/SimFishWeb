@@ -63,6 +63,7 @@ var has_flower: bool = false
 var has_emerged: bool = false   # true once tip has reached the water surface
 var bloom_voxels: Array[MeshInstance3D] = []
 var seed_timer: float = 0.0
+@warning_ignore("unused_private_class_variable")
 var _flower_voxel: MeshInstance3D = null
 var _phase: float = 0.0
 var _t: float = 0.0
@@ -110,10 +111,23 @@ var _leaf_nodes: Array[Node3D] = []
 var _leaf_ages: Array[float] = []  # birth time per leaf for aging
 
 # ---- Runner propagation ----
+# Vegetative spread (stolons). Ribbon-form plants (Vallisneria) periodically
+# send out a horizontal runner along the substrate; the runner grows over a
+# few seconds as a thin chain of voxels, then spawns a daughter plant at
+# its tip. Real Walstad mechanism for low-light ribbon plants - they
+# colonize floor space without needing to flower.
 var _runner_target: Vector3 = Vector3.ZERO
+var _runner_origin: Vector3 = Vector3.ZERO  # plant-local start of the chain
 var _runner_active: bool = false
-var _runner_progress: float = 0.0
+var _runner_progress: float = 0.0           # voxels placed along the chain
 var _runner_voxels: Array[MeshInstance3D] = []
+var _runner_cooldown: float = 0.0            # ticks down to 0 then a runner can start
+const RUNNER_VOXEL_COUNT: int = 6
+const RUNNER_SEGMENT_TIME: float = 0.6        # seconds per voxel placed
+const RUNNER_COOLDOWN_MIN: float = 120.0
+const RUNNER_COOLDOWN_MAX: float = 240.0
+const RUNNER_DISTANCE_MIN: float = 1.4
+const RUNNER_DISTANCE_MAX: float = 2.1
 
 
 func init(initial_height: int = 1, params: Dictionary = {}) -> void:
@@ -175,40 +189,46 @@ func _add_root(root_ramp: Array) -> void:
 
 
 func _setup_pearling() -> void:
+	# Pearling = O2 micro-bubbles clinging to leaves in bright light. Should
+	# read as a faint shimmer, never confused with the chunky opaque aerator
+	# stream. Kept small in count, scale, and alpha intentionally.
 	_pearling_particles = GPUParticles3D.new()
 	_pearling_particles.name = "Pearling"
 	_pearling_particles.emitting = false
-	_pearling_particles.amount = 6
-	_pearling_particles.lifetime = 3.5
+	_pearling_particles.amount = 4
+	_pearling_particles.lifetime = 4.0
 	_pearling_particles.local_coords = false
 	_pearling_particles.visibility_aabb = AABB(Vector3(-2, -1, -2), Vector3(4, 8, 4))
 	var pm := ParticleProcessMaterial.new()
 	pm.direction = Vector3(0, 1, 0)
-	pm.initial_velocity_min = 0.3
-	pm.initial_velocity_max = 0.6
-	pm.gravity = Vector3(0, 0.2, 0)  # bubbles rise
-	pm.spread = 15.0
-	pm.scale_min = 0.3
-	pm.scale_max = 0.8
+	pm.initial_velocity_min = 0.2
+	pm.initial_velocity_max = 0.45
+	pm.gravity = Vector3(0, 0.15, 0)  # bubbles rise slowly
+	pm.spread = 12.0
+	pm.scale_min = 0.2
+	pm.scale_max = 0.55
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
 	pm.emission_sphere_radius = 0.3
-	# Fade out over lifetime.
+	# Gentle alpha curve: fade in, hold faint, fade out. Never opaque.
 	var alpha_curve := CurveTexture.new()
 	var curve := Curve.new()
-	curve.add_point(Vector2(0.0, 1.0))
-	curve.add_point(Vector2(0.7, 0.8))
+	curve.add_point(Vector2(0.0, 0.0))
+	curve.add_point(Vector2(0.15, 0.6))
+	curve.add_point(Vector2(0.7, 0.5))
 	curve.add_point(Vector2(1.0, 0.0))
 	alpha_curve.curve = curve
 	pm.alpha_curve = alpha_curve
 	_pearling_particles.process_material = pm
-	# Tiny white sphere mesh for the bubbles.
+	# Tiny near-clear sphere mesh for the bubbles. Base alpha is the cap
+	# the curve scales against, so keep it well below the aerator's opaque
+	# look.
 	var bubble_mesh := SphereMesh.new()
-	bubble_mesh.radius = 0.035
-	bubble_mesh.height = 0.07
+	bubble_mesh.radius = 0.028
+	bubble_mesh.height = 0.056
 	bubble_mesh.radial_segments = 4
 	bubble_mesh.rings = 2
 	var bubble_mat := StandardMaterial3D.new()
-	bubble_mat.albedo_color = Color(0.9, 0.95, 1.0, 0.8)
+	bubble_mat.albedo_color = Color(0.92, 0.96, 1.0, 0.35)
 	bubble_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	bubble_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	bubble_mesh.material = bubble_mat
@@ -300,7 +320,7 @@ func _grow_paddle_leaf(ramp: Array, age_frac: float, rel: float,
 	_leaf_ages.append(_t)
 
 
-func _grow_ribbon_leaf(ramp: Array, age_frac: float, rel: float,
+func _grow_ribbon_leaf(ramp: Array, age_frac: float, _rel: float,
 		photo_offset: Vector2) -> void:
 	var leaf_node := Node3D.new()
 	leaf_node.name = "Blade_%d" % current_height
@@ -344,6 +364,7 @@ func _grow_lance_pair(ramp: Array, age_frac: float, rel: float,
 		leaf_node.name = "LeafPair_%d" % current_height
 		leaf_node.position = stem_mi.position
 		add_child(leaf_node)
+		@warning_ignore("integer_division")
 		var leaf_voxels: Array = LeafShapes.build_lance_pair(
 			ramp, age_frac, current_height / 2)
 		for v in leaf_voxels:
@@ -353,7 +374,7 @@ func _grow_lance_pair(ramp: Array, age_frac: float, rel: float,
 		_leaf_ages.append(_t)
 
 
-func _grow_needle_leaf(ramp: Array, age_frac: float, rel: float,
+func _grow_needle_leaf(ramp: Array, age_frac: float, _rel: float,
 		photo_offset: Vector2) -> void:
 	var leaf_node := Node3D.new()
 	leaf_node.name = "Needle_%d" % current_height
@@ -484,6 +505,90 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 	# Seeding.
 	_tick_seeding(dt)
 
+	# Vegetative spread via runners (ribbon-form plants only).
+	_tick_runner(dt)
+
+
+# Ribbon-form plants extend a horizontal stolon along the substrate that
+# matures into a daughter plant at its tip. The chain grows one voxel
+# every RUNNER_SEGMENT_TIME seconds so the player can watch the runner
+# stretch. Skips if not mature enough, the cooldown is still active, or
+# this individual is already running one.
+func _tick_runner(dt: float) -> void:
+	if leaf_form != "ribbon":
+		return
+	if _runner_active:
+		_advance_runner(dt)
+		return
+	_runner_cooldown = maxf(0.0, _runner_cooldown - dt)
+	if _runner_cooldown > 0.0:
+		return
+	if current_height < 8 or is_dying:
+		return
+	# Don't endlessly spam runners if the parent plant is unhealthy.
+	if health < 0.55:
+		return
+	_begin_runner()
+
+
+func _begin_runner() -> void:
+	# Pick a random horizontal direction + distance. The runner stays
+	# parallel to the substrate (no Y change). _runner_target is in this
+	# plant's LOCAL space - we don't want the chain to drift when the
+	# plant sways.
+	var theta: float = randf() * TAU
+	var dist: float = randf_range(RUNNER_DISTANCE_MIN, RUNNER_DISTANCE_MAX)
+	_runner_origin = Vector3(0.0, 0.0, 0.0)
+	_runner_target = Vector3(cos(theta) * dist, 0.0, sin(theta) * dist)
+	_runner_active = true
+	_runner_progress = 0.0
+	_runner_voxels.clear()
+
+
+func _advance_runner(dt: float) -> void:
+	# Each placed voxel represents 1/RUNNER_VOXEL_COUNT of the chain.
+	_runner_progress += dt / RUNNER_SEGMENT_TIME
+	var placed: int = _runner_voxels.size()
+	var should_have: int = mini(int(_runner_progress), RUNNER_VOXEL_COUNT)
+	while placed < should_have:
+		var t: float = (float(placed) + 1.0) / float(RUNNER_VOXEL_COUNT)
+		var local_pos: Vector3 = _runner_origin.lerp(_runner_target, t)
+		var ramp: Array = ramp_override if ramp_override.size() == 6 else PLANT_RAMP
+		var rv := MeshInstance3D.new()
+		rv.mesh = VoxelMat.get_box(Vector3(
+			VOXEL_SIZE * 0.45,
+			VOXEL_SIZE * 0.30,
+			VOXEL_SIZE * 0.45,
+		))
+		rv.material_override = VoxelMat.make(ramp[1])  # darker green, runner is woody
+		rv.position = local_pos
+		add_child(rv)
+		_runner_voxels.append(rv)
+		placed += 1
+	if placed >= RUNNER_VOXEL_COUNT:
+		_finalize_runner()
+
+
+func _finalize_runner() -> void:
+	# Convert the runner tip into a daughter plant via world.spawn_seedling.
+	# The runner voxels are left visible as the connecting stolon - they
+	# stay attached to this plant and decay with it. The daughter is a
+	# brand-new independent plant registered with SimDriver.
+	var sim_driver: Node = _find_sim()
+	if sim_driver != null:
+		var w: Node = sim_driver.get_parent()
+		if w != null and w.has_method("spawn_seedling"):
+			# Convert local target → world for spawn. Y snaps to substrate
+			# in spawn_seedling via the plant's own _ready logic.
+			var world_pos: Vector3 = global_position + _runner_target
+			# Inherit ramp but with very mild drift so the daughter is
+			# clearly the same species.
+			var mutated_ramp: Array = ramp_override.duplicate() if ramp_override.size() == 6 else PLANT_RAMP.duplicate()
+			w.spawn_seedling(world_pos, mutated_ramp, generation + 1, get_seed_config())
+	_runner_active = false
+	_runner_progress = 0.0
+	_runner_cooldown = randf_range(RUNNER_COOLDOWN_MIN, RUNNER_COOLDOWN_MAX)
+
 
 # ---- Flowering lifecycle ----
 
@@ -598,7 +703,7 @@ func _find_sim() -> Node:
 
 # ---- Pearling ----
 
-func _tick_pearling(dt: float) -> void:
+func _tick_pearling(_dt: float) -> void:
 	var sim_driver: Node = _find_sim()
 	if sim_driver == null:
 		return
@@ -742,6 +847,7 @@ func _get_flow_bias() -> float:
 func _apply_pinholes() -> void:
 	_has_pinholes = true
 	# Make some voxels in the middle of the plant invisible (gaps in leaves).
+	@warning_ignore("integer_division")
 	var n_holes: int = maxi(1, voxels.size() / 6)
 	for i in n_holes:
 		var idx: int = randi() % maxi(1, voxels.size())

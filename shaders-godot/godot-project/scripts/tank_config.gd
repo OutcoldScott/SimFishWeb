@@ -72,8 +72,10 @@ var light_fixture: String = "bar"
 var light_height: float = 1.4
 # Size of the fixture as a fraction of tank width.
 var light_size: float = 0.75
-# Show volumetric beams (god rays). Off can save a bit of GPU.
-var light_volumetric: bool = true
+# Show volumetric beams (god rays). Off by default - heavy on macOS Metal
+# and a known fence-timeout trigger when combined with the dense scene.
+# Users can re-enable via Settings panel.
+var light_volumetric: bool = false
 
 # ---- Fauna ----
 # If true, respawn 10 of each creature if the tank is empty.
@@ -126,6 +128,11 @@ const SPECIES_LIBRARY: Dictionary = {
 			"swim_pattern": "school",
 			"tail_shape": 0,                  # forked - signature tetra tail
 			"eye_size_factor": 1.0,
+			# Tetras have a distinctive adipose fin between the dorsal and
+			# the tail. Combined with the slim torpedo body + deep fork it
+			# makes them instantly recognisable as "tetra-shaped".
+			"adipose_fin": true,
+			"body_shape": "fusiform",
 		},
 	},
 	"mudsifter": {
@@ -159,6 +166,10 @@ const SPECIES_LIBRARY: Dictionary = {
 			"back_arch": 1.0,
 			"tail_shape": 3,                    # square paddle
 			"snail_predator": true,             # loaches LOVE snails
+			# Loaches are anguilliform - long tube body, no apparent
+			# segmentation. Extra rear filler voxels close the gap
+			# between the body and the tail peduncle.
+			"body_shape": "anguilliform",
 		},
 	},
 	"betta": {
@@ -185,6 +196,10 @@ const SPECIES_LIBRARY: Dictionary = {
 			"tail_shape": 2,                    # lyre - long flowing trailing rays
 			"eye_size_factor": 1.1,
 			"back_arch": 1.15,                  # mild hump
+			# Bettas have an anal fin almost as long as the body itself,
+			# sweeping back behind them. Combined with the long lyre tail
+			# and tall dorsal, the silhouette reads as "all flowing fin".
+			"anal_fin_length_factor": 1.5,
 		},
 	},
 	"killifish": {
@@ -217,6 +232,10 @@ const SPECIES_LIBRARY: Dictionary = {
 			"eye_size_factor": 1.35,
 			"back_arch": 1.1,
 			"tail_shape": 3,                    # square paddle
+			# Subtle adipose fin sits between the dorsal and tail. Real
+			# killifish have one - it reads as "this is not a tetra-tetra
+			# but it shares the lineage." Helps differentiate from danios.
+			"adipose_fin": true,
 		},
 	},
 	"guppy": {
@@ -248,6 +267,10 @@ const SPECIES_LIBRARY: Dictionary = {
 			"tail_shape": 1,                     # fan - signature guppy
 			"eye_size_factor": 1.05,
 			"ventral_profile": 1.1,
+			# Livebearer: real guppies are viviparous. Females carry fry
+			# internally; sim_driver._lay_eggs branches on this flag to
+			# spawn free-swimming fry directly instead of plant-laid eggs.
+			"is_livebearer": true,
 		},
 	},
 	"pufferfish": {
@@ -283,6 +306,11 @@ const SPECIES_LIBRARY: Dictionary = {
 			"back_arch": 1.05,
 			"tail_shape": 3,                    # square paddle
 			"snail_predator": true,             # puffer #1 snail killer
+			# Globiform body - the puffer needs to read as a near-sphere,
+			# not a stretched body with a bulgy belly. The body_shape
+			# branch in fish.gd adds wraparound voxels (front + rear caps
+			# and lateral cheeks) that close out the silhouette.
+			"body_shape": "globiform",
 		},
 	},
 	"danio": {
@@ -374,6 +402,17 @@ const SPECIES_LIBRARY: Dictionary = {
 			"eye_size_factor": 1.0,
 			"back_arch": 1.45,                  # tall arched silhouette
 			"ventral_profile": 1.15,
+			# Angelfish-defining silhouette traits:
+			#  - compressed body: tall thin disc, the unmistakable
+			#    angelfish profile (extra voxels above + below midline).
+			#  - matching trailing anal fin: equal length to the dorsal so
+			#    the fish reads symmetrical top-to-bottom, with two long
+			#    sweeping fins front-to-back like a diamond.
+			#  - pointed snout: cichlid wedge face, not a blunt round
+			#    cory-style head.
+			"body_shape": "compressed",
+			"anal_fin_length_factor": 1.7,
+			"snout_pointed": true,
 		},
 	},
 }

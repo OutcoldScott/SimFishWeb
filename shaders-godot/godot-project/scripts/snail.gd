@@ -49,6 +49,14 @@ var _t_until_breed: float = 0.0
 # forward "step" added to the slide velocity. The fast-moving snails have
 # more visible pulses; paused snails don't pulse.
 var _pulse_phase: float = 0.0
+# Shell-retraction defense. Real snails clamp the foot into the shell and
+# go still when a predator brushes past. Set true while a snail_predator
+# (loach / puffer) is within CLAMP_RADIUS. Movement is suspended and the
+# body squashes flat against the wall.
+var _clamped: bool = false
+const CLAMP_RADIUS: float = 1.6
+const CLAMP_RELEASE_GRACE: float = 0.7   # extra time clamped after threat leaves
+var _clamp_grace_remaining: float = 0.0
 
 
 func _ready() -> void:
@@ -77,6 +85,19 @@ func _process(dt: float) -> void:
 	# to compute scale, so we just flip the flag here.
 	if is_baby and _age >= MATURITY_AGE:
 		is_baby = false
+
+	# Predator scan: clamp into the shell when a snail-hunter is close.
+	# Real snails go still + retract so soft body parts aren't exposed.
+	# We re-scan every tick rather than caching threats so a moving puffer
+	# trips the clamp the moment it crosses the radius.
+	_check_predator_threat(dt)
+
+	# When clamped we suspend movement entirely - foot's pulled in, no
+	# crawling, no foraging, no breeding decision needed. Skip the rest
+	# of the tick.
+	if _clamped:
+		_apply_squash(0.35, Vector3.UP)  # body flattened into shell
+		return
 
 	_t_until_turn -= dt
 	if _t_until_turn <= 0.0:
@@ -268,6 +289,35 @@ func _lay_egg_sac() -> void:
 	sac.set("inherited_shell_color", new_color)
 	sac.set("inherited_shell_size", new_size)
 	sac.set("inherited_generation", generation + 1)
+
+
+func _check_predator_threat(dt: float) -> void:
+	# Find the nearest fish with snail_predator == true (loach, puffer).
+	# Clamp if any are inside CLAMP_RADIUS; otherwise tick down the
+	# release grace so the snail doesn't instantly un-clamp when a fish
+	# briefly passes by.
+	var sim := _get_sim()
+	if sim == null:
+		_clamped = false
+		return
+	var threat_close: bool = false
+	var radius_sq: float = CLAMP_RADIUS * CLAMP_RADIUS
+	for f in sim.fish:
+		if not is_instance_valid(f):
+			continue
+		if not bool(f.snail_predator):
+			continue
+		if f.position.distance_squared_to(position) < radius_sq:
+			threat_close = true
+			break
+	if threat_close:
+		_clamped = true
+		_clamp_grace_remaining = CLAMP_RELEASE_GRACE
+		_pursuing_waste = false
+	elif _clamped:
+		_clamp_grace_remaining = maxf(0.0, _clamp_grace_remaining - dt)
+		if _clamp_grace_remaining <= 0.0:
+			_clamped = false
 
 
 func _choose_new_direction() -> void:

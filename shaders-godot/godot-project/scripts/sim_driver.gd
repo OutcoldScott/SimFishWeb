@@ -228,9 +228,9 @@ func _tick(dt: float) -> void:
 			_extinction_timer += dt
 			if _extinction_timer >= 5.0:
 				_extinction_timer = 0.0
-				var world: Node = get_parent()
-				if world != null and world.has_method("_respawn_extinct_fauna"):
-					world.call("_respawn_extinct_fauna")
+				var w: Node = get_parent()
+				if w != null and w.has_method("_respawn_extinct_fauna"):
+					w.call("_respawn_extinct_fauna")
 		else:
 			_extinction_timer = 0.0
 
@@ -241,15 +241,15 @@ func _tick(dt: float) -> void:
 			_auto_feed_timer = 0.0
 			var spawn_x: float = 0.0
 			var spawn_z: float = 0.0
-			var world := get_parent()
-			if world != null and world.has_method("sample_xz_in_tank"):
-				var xz: Vector2 = world.sample_xz_in_tank(0.5)
+			var w := get_parent()
+			if w != null and w.has_method("sample_xz_in_tank"):
+				var xz: Vector2 = w.sample_xz_in_tank(0.5)
 				spawn_x = xz.x
 				spawn_z = xz.y
 			else:
 				spawn_x = randf_range(world_bounds.position.x + 0.5, world_bounds.end.x - 0.5)
 				spawn_z = randf_range(world_bounds.position.z + 0.5, world_bounds.end.z - 0.5)
-			var fy: float = 6.4 if world == null else float(world.get("WATER_HEIGHT") - 0.1)
+			var fy: float = 6.4 if w == null else float(w.get("WATER_HEIGHT") - 0.1)
 			_spawn_waste(Vector3(spawn_x, fy, spawn_z), 0.5, 3) # 3 = KIND_FOOD
 
 	# 6c. Algae - bloom if conditions favor (high nutrients + low plant biomass),
@@ -283,9 +283,9 @@ func _tick(dt: float) -> void:
 		# them mid-water floating uselessly.
 		var spawn_x: float = 0.0
 		var spawn_z: float = 0.0
-		var world := get_parent()
-		if world != null and world.has_method("sample_xz_in_tank"):
-			var xz: Vector2 = world.sample_xz_in_tank(0.5)
+		var w := get_parent()
+		if w != null and w.has_method("sample_xz_in_tank"):
+			var xz: Vector2 = w.sample_xz_in_tank(0.5)
 			spawn_x = xz.x
 			spawn_z = xz.y
 		else:
@@ -438,16 +438,39 @@ func _release_shrimp_brood(mother: Shrimp, brood_genome: Dictionary) -> void:
 
 
 func _lay_eggs(a: Fish, b: Fish) -> void:
-	# Place eggs on a plant if one is nearby (substrate spawners) OR on the
-	# substrate directly. Each egg is a separate node that incubates and
-	# hatches into a fry.
+	# Branch on a.is_livebearer: guppies and platies don't lay eggs - the
+	# female releases free-swimming juveniles directly. Everyone else
+	# enters the FishEgg incubation pipeline.
 	if fauna_root == null:
 		return
 	var n: int = mini(a.clutch_size, 4)
 	var mid: Vector3 = (a.position + b.position) * 0.5
-	# Find a plant near the spawn site to lay eggs on (more realistic - many
-	# species use plant leaves as a substrate). Fall back to dropping eggs
-	# onto the tank floor.
+
+	if a.is_livebearer or b.is_livebearer:
+		# Livebearer drop: spawn fry directly at the female's belly. Pick
+		# whichever parent flagged the trait as the "mother" (in dimorphic
+		# species the larger silvery female is sex == 1).
+		var mother: Fish = a if a.sex == 1 else b
+		for i in n:
+			var g: Dictionary = a.produce_offspring_genome(b)
+			var fry := Fish.new()
+			fauna_root.add_child(fry)
+			fry.global_position = mother.global_position + Vector3(
+				randf_range(-0.15, 0.15),
+				randf_range(-0.10, 0.05),
+				randf_range(-0.15, 0.15),
+			)
+			fry.init_genome(g)
+			fry.maturity = Fish.MATURITY_FRY
+			fry.hunger = 0.25
+			fry.energy = 0.95
+			register_fish(fry)
+		# Mother's belly is empty: extra exhaustion + small recovery cooldown.
+		mother.energy = maxf(0.0, mother.energy - 0.20)
+		_play_ambient(0.65)
+		return
+
+	# Egg-layers: choose a plant leaf if available, else drop on substrate.
 	var lay_at: Vector3 = mid
 	lay_at.y = maxf(substrate_top_y + 0.15, mid.y - 0.5)
 	var best_plant: Plant = null
@@ -476,6 +499,17 @@ func _lay_eggs(a: Fish, b: Fish) -> void:
 		)
 		e.init(g)
 		register_egg(e)
+
+	# Pair-bonding species (currently angelfish via swim_pattern "hover")
+	# enter brooding mode: both parents hover near the nest and chase
+	# intruders for BROODING_DURATION sim seconds. Fish.tick() reads the
+	# brooding fields and overrides its behavior tree while active.
+	if a.swim_pattern == "hover" and b.swim_pattern == "hover":
+		a.brooding_at = lay_at
+		a.brooding_remaining = Fish.BROODING_DURATION
+		b.brooding_at = lay_at
+		b.brooding_remaining = Fish.BROODING_DURATION
+
 	_play_ambient(0.4)  # soft mid-tone for laying
 
 
@@ -592,4 +626,4 @@ func _emit_stats() -> void:
 		"aeration_fixture": aeration_fixture,
 	}
 	stats_changed.emit(s)
-	print("[vivarium] ", s)
+	print_verbose("[vivarium] ", s)

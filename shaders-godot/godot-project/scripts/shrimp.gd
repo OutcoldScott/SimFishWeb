@@ -67,6 +67,14 @@ var is_gravid: bool = false
 var gravid_timer: float = 0.0
 var gravid_partner_genome: Dictionary = {}  # cached mate genome at fertilization
 var _egg_cluster: Node3D = null
+# Molting: shrimp shed their exoskeleton periodically. Real cherry shrimp
+# molt every 30-60 days; the sim's compressed time uses 60-120s. A molt
+# produces a brief visible "pop" + drops an exuvia (small KIND_SHRIMP
+# waste) at the substrate that snails / detritivores can eat.
+var _molt_timer: float = 0.0
+var _molt_flash: float = 0.0
+const MOLT_INTERVAL_MIN: float = 60.0
+const MOLT_INTERVAL_MAX: float = 120.0
 # Tracks how many successful broods this individual has had. Used for
 # breeding-partner bias - successful breeders are more attractive (cheap
 # stand-in for true sexual selection).
@@ -186,6 +194,24 @@ func _build_body() -> void:
 		_voxel(_bank_pivot, Vector3(-xside * v, -v * 0.4, zoff * v),
 			   Vector3(v * 0.1, v * 0.3, v * 0.1), mat_dark)
 
+	# Egg cluster (visible only when is_gravid). Real cherry-shrimp eggs
+	# are 25-30 bright yellow-orange spheres carried under the swimmerets.
+	# We approximate with a small voxel cluster parented under the tail
+	# pivot so it bobs naturally with the tail wag.
+	_egg_cluster = Node3D.new()
+	_egg_cluster.name = "EggCluster"
+	_egg_cluster.position = Vector3(0, -v * 0.15, v * 0.3)
+	_egg_cluster.visible = false
+	_tail_pivot.add_child(_egg_cluster)
+	var mat_egg := VoxelMat.make(Color8(240, 165, 60))
+	for ex in [-0.18, 0.0, 0.18]:
+		for ez in [-0.1, 0.1]:
+			_voxel(_egg_cluster, Vector3(ex * v, 0.0, ez * v),
+				   Vector3(v * 0.18, v * 0.18, v * 0.18), mat_egg)
+
+	# Stagger first molt so the population doesn't molt in lock-step.
+	_molt_timer = randf_range(MOLT_INTERVAL_MIN, MOLT_INTERVAL_MAX)
+
 
 func _voxel(parent: Node3D, pos: Vector3, size: Vector3, mat: Material) -> void:
 	var mi := MeshInstance3D.new()
@@ -197,7 +223,7 @@ func _voxel(parent: Node3D, pos: Vector3, size: Vector3, mat: Material) -> void:
 
 # ---- Brain (10 Hz tick) ----
 
-func tick(dt: float, plants: Array, algae_array: Array, waste: Array, fry_array: Array, baby_snails: Array,
+func tick(dt: float, plants: Array, algae_array: Array, waste: Array, _fry_array: Array, baby_snails: Array,
 		  neighbors: Array, world_bounds: AABB) -> Dictionary:
 	var events: Dictionary = {}
 
@@ -214,6 +240,19 @@ func tick(dt: float, plants: Array, algae_array: Array, waste: Array, fry_array:
 			is_gravid = false
 			gravid_timer = 0.0
 			gravid_partner_genome = {}
+
+	# Molting (adults only - fry are still growing into their first shell).
+	if maturity == MATURITY_ADULT:
+		_molt_timer = maxf(0.0, _molt_timer - dt)
+		if _molt_timer <= 0.0:
+			_molt_timer = randf_range(MOLT_INTERVAL_MIN, MOLT_INTERVAL_MAX)
+			_molt_flash = 1.0
+			# Drop the exuvia at substrate as a small KIND_SHRIMP waste so
+			# snails / detritivores can graze it. sim_driver routes
+			# waste_at via actor_kind to the right WasteParticle kind.
+			events["waste_at"] = Vector3(position.x,
+				substrate_top_y + 0.04, position.z)
+			events["waste_amount"] = 0.05
 
 	_update_maturity()
 
@@ -273,7 +312,6 @@ func tick(dt: float, plants: Array, algae_array: Array, waste: Array, fry_array:
 	var shrimp_pop: int = sim.shrimp.size() if sim != null else 0
 	if maturity == MATURITY_ADULT and hunger > 0.5 and shrimp_pop >= 22 \
 			and randf() < 0.08 and sim != null:
-		var my_size: float = effective_size()
 		var fry_prey: Shrimp = null
 		var best_d2: float = 1.0
 		for s in sim.shrimp:
@@ -554,6 +592,21 @@ func _process(dt: float) -> void:
 	if _antenna_pivot != null:
 		_antenna_pivot.rotation.y = sin(_swim_phase * 1.7) * 0.20
 		_antenna_pivot.rotation.x = sin(_swim_phase * 2.1) * 0.10
+
+	# Egg-cluster visibility: visible only during the gravid window.
+	if _egg_cluster != null and _egg_cluster.visible != is_gravid:
+		_egg_cluster.visible = is_gravid
+
+	# Molt visual: brief size pop on freshly-molted shrimp. _molt_flash is
+	# set to 1.0 in tick() when a molt happens and decays here. We apply
+	# it via the bank pivot's scale so it stacks cleanly with banking.
+	if _molt_flash > 0.0:
+		_molt_flash = maxf(0.0, _molt_flash - dt * 1.2)
+		if _bank_pivot != null:
+			var pop: float = 1.0 + _molt_flash * 0.10
+			_bank_pivot.scale = Vector3(pop, pop, pop)
+	elif _bank_pivot != null and _bank_pivot.scale != Vector3.ONE:
+		_bank_pivot.scale = Vector3.ONE
 
 	# Maturity scale lerps AND growth_factor so well-fed shrimp visibly bulk.
 	scale = scale.lerp(Vector3.ONE * _maturity_scale() * growth_factor, dt * 0.5)

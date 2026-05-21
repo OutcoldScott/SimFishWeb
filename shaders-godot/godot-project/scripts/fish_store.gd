@@ -275,13 +275,13 @@ func _random_genome(slot_idx: int) -> Dictionary:
 	elif swim == "dart":
 		mouth = -1
 
-	var name: String = "%s %s" % [
+	var display_name: String = "%s %s" % [
 		NAME_ADJ[randi() % NAME_ADJ.size()],
 		NAME_NOUN[randi() % NAME_NOUN.size()],
 	]
 	return {
 		"species": "stranger_%d" % slot_idx,
-		"_display_name": name,
+		"_display_name": display_name,
 		"base_color": base_c,
 		"accent_color": accent_c,
 		"tail_color": tail_c,

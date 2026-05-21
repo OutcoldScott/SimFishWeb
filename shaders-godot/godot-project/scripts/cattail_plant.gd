@@ -141,6 +141,7 @@ func tick(dt: float) -> void:
 
 		# Add leaves at milestones (roughly every 1/3 of height).
 		if _leaves_built < 3:
+			@warning_ignore("integer_division")
 			var leaf_milestone: int = (height_voxels / 3) * (_leaves_built + 1)
 			if _current_height >= leaf_milestone:
 				_add_leaf_blade(_leaves_built)

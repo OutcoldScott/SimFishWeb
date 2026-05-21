@@ -18,7 +18,12 @@ const GOLDEN_ANGLE: float = 2.39996322972865332
 # the spiral spreads outward as it grows.
 @export var radius_step: float = 0.005
 @export var height_step: float = 0.18    # vertical rise per voxel (vs VOXEL_SIZE for stems)
-@export var radius_cap: float = 0.15      # maximum radius before the spiral plateaus
+@export var radius_cap: float = 0.10      # maximum radius before the spiral plateaus
+# Hard ceiling on the plant's horizontal silhouette including leaf reach.
+# Used both to clamp the leaf-root offset AND to refuse to tilt leaves
+# outward past this radius. Keep small so the plant reads as a column
+# (sunflower-stalk silhouette) and never clips the tank wall.
+@export var max_horizontal_extent: float = 0.22
 
 
 func _grow_one() -> bool:
@@ -27,28 +32,32 @@ func _grow_one() -> bool:
 	var idx: int = current_height
 	# Phyllotaxis: theta = idx * golden_angle
 	var theta: float = float(idx) * GOLDEN_ANGLE
-	
+
 	# Color ramp: outer / older leaves (low idx) are deeper green, inner / new
 	# leaves (high idx, central rosette) are brighter.
 	var rel: float = float(idx) / float(maxi(1, max_height - 1))
 	var ramp: Array = ramp_override if ramp_override.size() == 6 else PLANT_RAMP
-	
+
 	# Taper the radius as it gets taller so the plant stays very tight at the top
 	var taper: float = 1.0 - (rel * 0.75)
 	var r: float = minf(radius_step * sqrt(float(idx) + 1.0), radius_cap) * taper
-	
-	# Tight vertical leaves.
-	var leaf_len: int = clampi(2 + int((1.0 - rel) * 2.0), 2, 4)
-	var leaf_voxels: Array = LeafShapes.build_paddle(leaf_len, ramp, 1.0 - rel, 2, 0.45)
-	
+
+	# Tight vertical leaves: 1 voxel wide, length 2-3. Width was the silent
+	# culprit — at width=2 each leaf was 3 voxels across (±0.24 lateral),
+	# which combined with the outward pitch let leaves clip the tank wall.
+	var leaf_len: int = clampi(2 + int((1.0 - rel) * 1.5), 2, 3)
+	var leaf_voxels: Array = LeafShapes.build_paddle(leaf_len, ramp, 1.0 - rel, 1, 0.45)
+
 	var leaf_root := Node3D.new()
 	var outward := Vector3(cos(theta), 0.0, sin(theta))
 	leaf_root.position = Vector3(0.0, float(idx) * height_step, 0.0) + outward * r
 	leaf_root.transform = leaf_root.transform.looking_at(leaf_root.position + outward, Vector3.UP)
-	
-	# Godot look_at makes local -Z point outward.
-	# Pitching by -X tilts the leaf (which grows along +Y) towards -Z (outward).
-	leaf_root.rotation.x = -lerpf(PI * 0.08, PI * 0.01, rel)
+
+	# Near-vertical leaves. Old range PI*0.08..0.01 leaned outward enough
+	# (sin(14°) * leaf_length) to push voxels past the spawn margin. Hold
+	# the leaves nearly upright so the silhouette stays inside
+	# max_horizontal_extent.
+	leaf_root.rotation.x = -lerpf(PI * 0.025, PI * 0.005, rel)
 	
 	add_child(leaf_root)
 	

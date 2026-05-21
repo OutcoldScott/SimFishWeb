@@ -167,7 +167,7 @@ func _toggle_portal() -> void:
 		portal_hint.visible = _portal_target == null
 	if _portal_open:
 		_update_portal_pip()
-	print("[vivarium] PiP portal %s" % ("OPEN" if _portal_open else "CLOSED"))
+	print_verbose("[vivarium] PiP portal %s" % ("OPEN" if _portal_open else "CLOSED"))
 
 
 func _restore_camera_state() -> void:
@@ -213,7 +213,7 @@ func _apply_render_config() -> void:
 	# SubViewport size.
 	sub_viewport.size = Vector2i(int(cfg.render_width), int(cfg.render_height))
 	# MSAA: 0=disabled, 1=2x, 2=4x, 3=8x (matches Viewport.MSAA enum).
-	sub_viewport.msaa_3d = int(cfg.msaa)
+	sub_viewport.msaa_3d = int(cfg.msaa) as Viewport.MSAA
 	# Palette quantize shader uniforms.
 	if display.material is ShaderMaterial:
 		var sm: ShaderMaterial = display.material
@@ -509,7 +509,7 @@ func _take_photo() -> void:
 	var ts: String = Time.get_datetime_string_from_system().replace(":", "-").replace("T", "_")
 	var path: String = dir + "/vivarium_" + ts + ".png"
 	img.save_png(path)
-	print("[vivarium] photo saved: ", path)
+	print_verbose("[vivarium] photo saved: ", path)
 
 
 # ---- Timelapse mode ----
@@ -526,7 +526,7 @@ const TIMELAPSE_INTERVAL: float = 0.5
 func _toggle_timelapse() -> void:
 	if _timelapse_active:
 		_timelapse_active = false
-		print("[vivarium] timelapse stopped: ", _timelapse_index, " frames in ", _timelapse_dir)
+		print_verbose("[vivarium] timelapse stopped: ", _timelapse_index, " frames in ", _timelapse_dir)
 	else:
 		var ts: String = Time.get_datetime_string_from_system().replace(":", "-").replace("T", "_")
 		_timelapse_dir = OS.get_user_data_dir() + "/captures/timelapse_" + ts
@@ -534,7 +534,7 @@ func _toggle_timelapse() -> void:
 		_timelapse_index = 0
 		_timelapse_accum = 0.0
 		_timelapse_active = true
-		print("[vivarium] timelapse started: ", _timelapse_dir)
+		print_verbose("[vivarium] timelapse started: ", _timelapse_dir)
 
 
 # ---- Follow-cam ----
@@ -606,7 +606,7 @@ func _gather_creatures() -> Array:
 	return creatures
 
 
-func _pick_creature_at_viewport(sv_pos: Vector2) -> Node3D:
+func _pick_creature_at_viewport(sv_pos: Vector2, creatures: Array) -> Node3D:
 	if camera == null:
 		return null
 	var radius_px: float = PORTAL_PICK_RADIUS_PX if _portal_open else PICK_RADIUS_PX
@@ -614,7 +614,7 @@ func _pick_creature_at_viewport(sv_pos: Vector2) -> Node3D:
 	var best_score: float = radius_px
 	var origin: Vector3 = camera.project_ray_origin(sv_pos)
 	var dir: Vector3 = camera.project_ray_normal(sv_pos)
-	for c in _gather_creatures():
+	for c in creatures:
 		var n: Node3D = c as Node3D
 		if n == null:
 			continue
@@ -635,11 +635,11 @@ func _pick_creature_at_viewport(sv_pos: Vector2) -> Node3D:
 	return best
 
 
-func _pick_creature_from_display() -> Node3D:
+func _pick_creature_from_display(creatures: Array) -> Node3D:
 	if display == null or sub_viewport == null:
 		return null
 	var sv_pos: Vector2 = _window_mouse_to_viewport(get_viewport().get_mouse_position())
-	return _pick_creature_at_viewport(sv_pos)
+	return _pick_creature_at_viewport(sv_pos, creatures)
 
 
 func _creature_label(creature: Node) -> String:
@@ -683,10 +683,10 @@ func _assign_creature_target(creature: Node3D) -> void:
 	if _portal_open:
 		_portal_target = creature
 		_update_portal_pip()
-		print("[vivarium] portal tracking %s" % _creature_label(creature))
+		print_verbose("[vivarium] portal tracking %s" % _creature_label(creature))
 	else:
 		_follow_target = creature
-		print("[vivarium] following %s" % _creature_label(creature))
+		print_verbose("[vivarium] following %s" % _creature_label(creature))
 
 
 func _click_targets_creature() -> bool:
@@ -704,12 +704,12 @@ func _click_targets_creature() -> bool:
 	var gp: Vector2 = display.get_global_mouse_position()
 	if not display.get_global_rect().has_point(gp):
 		return false
-	var picked: Node3D = _pick_creature_from_display()
+	var creatures: Array = _gather_creatures()
+	var picked: Node3D = _pick_creature_from_display(creatures)
 	if picked == null:
-		var n_creatures: int = _gather_creatures().size()
-		if _portal_open or n_creatures > 0:
-			print("[vivarium] pick miss: creatures=%d mouse=%s sv=%s" % [
-				n_creatures,
+		if _portal_open or creatures.size() > 0:
+			print_verbose("[vivarium] pick miss: creatures=%d mouse=%s sv=%s" % [
+				creatures.size(),
 				display.get_local_mouse_position(),
 				_window_mouse_to_viewport(get_viewport().get_mouse_position()),
 			])
@@ -732,7 +732,7 @@ func _toggle_aquascape() -> void:
 		if aquascape_palette != null:
 			aquascape_palette.visible = true
 		_refresh_tool_buttons()
-		print("[vivarium] aquascape ON. click to place stones, shift-click for driftwood, backspace undo, B exit.")
+		print_verbose("[vivarium] aquascape ON. click to place stones, shift-click for driftwood, backspace undo, B exit.")
 	else:
 		if _sim != null:
 			_sim.time_scale = _aquascape_saved_time_scale
@@ -740,7 +740,7 @@ func _toggle_aquascape() -> void:
 			_aquascape_preview.visible = false
 		if aquascape_palette != null:
 			aquascape_palette.visible = false
-		print("[vivarium] aquascape OFF (resumed at %gx)" % _aquascape_saved_time_scale)
+		print_verbose("[vivarium] aquascape OFF (resumed at %gx)" % _aquascape_saved_time_scale)
 
 
 # Build the floating tool palette shown at top-center while in aquascape
@@ -916,7 +916,7 @@ func _aquascape_place(mouse_pos: Vector2) -> void:
 	# this is the fix for "dirt placed in empty space when clicking outside
 	# the tank glass".
 	if hit == INVALID_HIT:
-		print("[vivarium] aquascape: cursor not over tank, skipping placement")
+		print_verbose("[vivarium] aquascape: cursor not over tank, skipping placement")
 		return
 	# Snap horizontally to a 0.5-unit grid so placement reads tidy.
 	hit.x = floorf(hit.x / 0.5) * 0.5 + 0.25
@@ -983,7 +983,7 @@ func _aquascape_place(mouse_pos: Vector2) -> void:
 	mi.global_position = hit
 	mi.set_meta("aquascape_tool", _aquascape_tool)
 	_aquascape_placed.append(mi)
-	print("[vivarium] placed %s at %s (total %d)" % [_aquascape_tool, hit, _aquascape_placed.size()])
+	print_verbose("[vivarium] placed %s at %s (total %d)" % [_aquascape_tool, hit, _aquascape_placed.size()])
 
 
 # Spawn a driftwood "log" as a 5-7 voxel chain in a gentle curve, parented
@@ -997,10 +997,10 @@ func _aquascape_place_log(base: Vector3) -> void:
 	if hardscape == null:
 		# Fall back to world root if Hardscape wasn't built yet.
 		hardscape = world
-	var log := Node3D.new()
-	log.name = "AquaLog"
-	hardscape.add_child(log)
-	log.global_position = base + Vector3(0, 0.35, 0)
+	var log_node := Node3D.new()
+	log_node.name = "AquaLog"
+	hardscape.add_child(log_node)
+	log_node.global_position = base + Vector3(0, 0.35, 0)
 	var voxel_mat_script := load("res://scripts/voxel_mat.gd")
 	# Random orientation: pick an angle in the XZ plane + a curve sign.
 	var theta: float = randf_range(0.0, TAU)
@@ -1032,11 +1032,11 @@ func _aquascape_place_log(base: Vector3) -> void:
 			var sm := StandardMaterial3D.new()
 			sm.albedo_color = c
 			seg.material_override = sm
-		log.add_child(seg)
+		log_node.add_child(seg)
 		seg.position = offset
-	log.set_meta("aquascape_tool", "wood")
-	_aquascape_placed.append(log)
-	print("[vivarium] placed driftwood log at %s" % base)
+	log_node.set_meta("aquascape_tool", "wood")
+	_aquascape_placed.append(log_node)
+	print_verbose("[vivarium] placed driftwood log at %s" % base)
 
 
 func _column_top_y(x: float, z: float) -> float:

@@ -281,13 +281,13 @@ func _add_section(parent: Node, label: String) -> void:
 	parent.add_child(l)
 
 
-func _add_slider_row(parent: Node, name: String, min_val: float, max_val: float,
+func _add_slider_row(parent: Node, label_text: String, min_val: float, max_val: float,
 		step: float, value_label: Label) -> HSlider:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	parent.add_child(row)
 	var l := Label.new()
-	l.text = name
+	l.text = label_text
 	l.custom_minimum_size = Vector2(140, 0)
 	row.add_child(l)
 	var s := HSlider.new()

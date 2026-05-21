@@ -118,19 +118,30 @@ func _ready() -> void:
 	sim.waste_root = waste_root
 	sim.algae_root = algae_root
 
+	# Stagger the build across frames so the GPU command buffer can drain
+	# between resource batches. Doing everything synchronously hammered Metal
+	# on macOS and tripped fence timeouts during the first render frame.
+	# Spawn functions themselves also yield internally (see each function).
 	_build_substrate()
 	_build_hardscape()
 	_build_water_volume()
 	_build_glass()
 	_build_snails()  # static decor
-
 	_build_light_fixture()
-	_spawn_initial_plants()
+	await get_tree().process_frame
+
+	await _spawn_initial_plants()
+	await get_tree().process_frame
+
 	_spawn_floaters()
 	_spawn_lily_pads()
 	_spawn_math_plants()
-	_spawn_initial_fish()
-	_spawn_initial_shrimp()
+	await get_tree().process_frame
+
+	await _spawn_initial_fish()
+	await _spawn_initial_shrimp()
+	await get_tree().process_frame
+
 	_spawn_aeration_system()
 	_spawn_mulm_layer()
 	_spawn_surface_ripples()
@@ -151,7 +162,7 @@ func _ready() -> void:
 	if we != null and we.environment != null and cfg != null:
 		we.environment.volumetric_fog_enabled = bool(cfg.light_volumetric)
 
-	print("[vivarium] world built: ", get_child_count(), " top-level nodes; ",
+	print_verbose("[vivarium] world built: ", get_child_count(), " top-level nodes; ",
 		  sim.fish.size(), " fish, ", sim.shrimp.size(), " shrimp, ",
 		  sim.plants.size(), " plants")
 
@@ -779,22 +790,29 @@ func _spawn_initial_plants() -> void:
 				continue
 			_spawn_plant(species_specs[0], Vector3(px, SUBSTRATE_DEPTH, pz),
 				_rng.randi_range(2, 5))
+	await get_tree().process_frame
 
 	# --- Midground rosettes (crypts) + red accent stems scattered ---
 	for i in 28:
 		var xz: Vector2 = _random_xz_in_band(-0.5, 1.5, 0.3)
 		_spawn_plant(species_specs[1], Vector3(xz.x, SUBSTRATE_DEPTH, xz.y),
 			_rng.randi_range(2, 4))
+	await get_tree().process_frame
 	for i in 14:
 		var xz: Vector2 = _random_xz_in_band(-1.5, 1.5, 0.3)
 		_spawn_plant(species_specs[3], Vector3(xz.x, SUBSTRATE_DEPTH, xz.y),
 			_rng.randi_range(2, 4))
+	await get_tree().process_frame
 
 	# --- Foreground carpet: very dense ---
 	for i in 55:
 		var xz: Vector2 = _random_xz_in_band(TANK_HALF_D * 0.2, TANK_HALF_D * 0.95, 0.3)
 		_spawn_plant(species_specs[2], Vector3(xz.x, SUBSTRATE_DEPTH, xz.y),
 			_rng.randi_range(1, 3))
+		# Yield mid-carpet too - this is the densest single block (55 plants).
+		if i == 27:
+			await get_tree().process_frame
+	await get_tree().process_frame
 
 	# --- Moss on the driftwood arch (epiphytes) ---
 	for x in [-5.5, -4.0, -2.5, -1.0, 0.5, 1.8, 3.2, 4.5]:
@@ -802,6 +820,7 @@ func _spawn_initial_plants() -> void:
 			var arc_y: float = 2.0 + cos(x * 0.4) * 0.6
 			_spawn_plant(species_specs[4], Vector3(x + off.x, arc_y, off.z),
 				_rng.randi_range(1, 2))
+	await get_tree().process_frame
 
 	# --- Spiral plants: 6 scattered, voxels arranged in golden-angle
 	# phyllotaxis. Visibly mathematical (sunflower / aloe pattern).
@@ -825,6 +844,7 @@ func _spawn_initial_plants() -> void:
 			"sway_amplitude": 0.06,
 		})
 		sim.register_plant(sp)
+	await get_tree().process_frame
 
 	# --- Branching ferns: 8 scattered, each grows into a small tree shape
 	# via L-system side branches. Visible mathematical structure.
@@ -925,9 +945,9 @@ func _initial_phenotype_spread() -> float:
 	return float(preset.get("phenotype_spread", 1.0))
 
 
-func _spread_around(base: float, range: float, mult: float) -> float:
-	# Helper: pick a value `base ± (range * mult)`. mult scales with preset.
-	return base + _rng.randf_range(-range, range) * mult
+func _spread_around(base: float, spread: float, mult: float) -> float:
+	# Helper: pick a value `base ± (spread * mult)`. mult scales with preset.
+	return base + _rng.randf_range(-spread, spread) * mult
 
 
 func _apply_initial_phenotype_spread(genome: Dictionary, mult: float) -> void:
@@ -997,6 +1017,10 @@ func _spawn_initial_fish() -> void:
 		stocking = {"glassdart": 14, "mudsifter": 5, "betta": 1}
 
 	var phenotype_mult: float = _initial_phenotype_spread()
+	# Each fish builds ~30-50 voxel MeshInstance3Ds (more with the new
+	# body_shape additions). Spawning all in one frame hammered Metal -
+	# we yield every 4 fish so the GPU command buffer can flush.
+	var _fish_built: int = 0
 	for species_name in stocking.keys():
 		# Shrimp + any non-fish key is handled separately.
 		if species_name == "shrimp":
@@ -1026,6 +1050,9 @@ func _spawn_initial_fish() -> void:
 			var xz: Vector2 = _random_xz_in_band(
 				-TANK_HALF_D * 0.85, TANK_HALF_D * 0.85, 0.6)
 			_spawn_fish_at(g, Vector3(xz.x, spawn_y, xz.y))
+			_fish_built += 1
+			if _fish_built % 4 == 0:
+				await get_tree().process_frame
 
 
 var _light_fixture_root: Node3D = null
@@ -1763,6 +1790,9 @@ func _spawn_initial_shrimp() -> void:
 		sh.global_position = Vector3(sh_xz.x, SUBSTRATE_DEPTH + 0.15, sh_xz.y)
 		sh.init_genome(g)
 		sim.register_shrimp(sh)
+		# Yield every 4 shrimp - each builds ~15 voxels + an egg cluster.
+		if (i + 1) % 4 == 0:
+			await get_tree().process_frame
 
 
 func _seed_nutrient_hotspots() -> void:
