@@ -196,8 +196,13 @@ func _process(dt: float) -> void:
 			spot.light_energy = spot_energy
 
 	# Floater drift: each surface plant wanders gently on a sin curve.
+	# Filter out queue_freed floaters (e.g. eaten by surface-feeding guppies).
 	_floater_t += sdt
+	var dead_floaters: Array = []
 	for f in _floaters:
+		if not is_instance_valid(f):
+			dead_floaters.append(f)
+			continue
 		var fn: Node3D = f
 		var ph: float = fn.get_meta("phase", 0.0)
 		fn.position.x += sin(_floater_t * 0.15 + ph) * 0.05 * sdt
@@ -207,6 +212,29 @@ func _process(dt: float) -> void:
 		# Soft clamp inside the tank.
 		fn.position.x = clampf(fn.position.x, -TANK_HALF_W * 0.9, TANK_HALF_W * 0.9)
 		fn.position.z = clampf(fn.position.z, -TANK_HALF_D * 0.9, TANK_HALF_D * 0.9)
+	for df in dead_floaters:
+		_floaters.erase(df)
+
+	# Duckweed propagation. Every DUCKWEED_PROP_INTERVAL sim seconds, IF the
+	# population is below DUCKWEED_CAP, spawn a fresh clump near a randomly
+	# chosen existing floater. Duckweed in a real Walstad tank doubles every
+	# ~3 days; we tune it to feel similar in compressed sim time. Density is
+	# capped so the surface doesn't fully block out the light beams.
+	const DUCKWEED_PROP_INTERVAL: float = 18.0
+	const DUCKWEED_CAP: int = 42
+	_duckweed_accum += sdt
+	if _duckweed_accum >= DUCKWEED_PROP_INTERVAL and _floaters.size() < DUCKWEED_CAP \
+			and _floaters.size() > 0:
+		_duckweed_accum = 0.0
+		var parent: Node3D = _floaters[_rng.randi_range(0, _floaters.size() - 1)]
+		if is_instance_valid(parent):
+			# New clump appears 0.5-1.0 unit from parent in a random direction.
+			var ang: float = _rng.randf_range(0.0, TAU)
+			var r: float = _rng.randf_range(0.5, 1.0)
+			var nx: float = parent.position.x + cos(ang) * r
+			var nz: float = parent.position.z + sin(ang) * r
+			if _is_inside_tank(nx, nz, 0.4):
+				_add_floater_at(Vector3(nx, WATER_HEIGHT - 0.05, nz))
 
 
 # ---- Materials ----
@@ -991,6 +1019,42 @@ func _spawn_floaters() -> void:
 
 var _floaters: Array = []
 var _floater_t: float = 0.0
+var _duckweed_accum: float = 0.0
+
+
+# Spawn a single duckweed clump at the given world-space position. Extracted
+# from _spawn_floaters so the propagation tick can call it. Each clump is a
+# Node3D with 3-5 leaf voxels + a tiny dangling root, registered into the
+# _floaters array so it drifts + gets propagated like the originals.
+func _add_floater_at(pos: Vector3) -> void:
+	var container := get_node_or_null("Floaters")
+	if container == null:
+		return
+	var disk := Node3D.new()
+	container.add_child(disk)
+	disk.position = pos
+	var n_leaves: int = _rng.randi_range(3, 5)
+	var leaf_color := Color8(70, 130, 60)
+	var leaf_color_dark := Color8(50, 100, 45)
+	for j in n_leaves:
+		var ang: float = float(j) / float(n_leaves) * TAU
+		var r: float = _rng.randf_range(0.15, 0.32)
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.28, 0.08, 0.28)
+		mi.mesh = bm
+		mi.position = Vector3(cos(ang) * r, 0, sin(ang) * r)
+		mi.material_override = VoxelMat.make(leaf_color if (j & 1) == 0 else leaf_color_dark)
+		disk.add_child(mi)
+	var root_mi := MeshInstance3D.new()
+	var root_bm := BoxMesh.new()
+	root_bm.size = Vector3(0.06, 0.3, 0.06)
+	root_mi.mesh = root_bm
+	root_mi.position = Vector3(0, -0.2, 0)
+	root_mi.material_override = VoxelMat.make(Color8(45, 70, 40))
+	disk.add_child(root_mi)
+	disk.set_meta("phase", randf() * TAU)
+	_floaters.append(disk)
 
 
 func _spawn_surface_ripples() -> void:

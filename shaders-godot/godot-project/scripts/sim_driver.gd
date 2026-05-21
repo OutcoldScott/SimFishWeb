@@ -310,6 +310,27 @@ func _tick(dt: float) -> void:
 				# baby snail is a Node3D under snails_root - no explicit array
 				prey.queue_free()
 
+		# Specialist predation - loach + puffer cropping baby snails. Same
+		# free-the-node path as kill_prey but emitted by the tier 1.9
+		# specialist diet code in fish.gd. We treat the snail's voxel body
+		# as biomass returning to the substrate - drop a small waste particle
+		# at the snail's last position so the loop closes.
+		if ev.has("kill_snail"):
+			var snail: Node = ev["kill_snail"]
+			if is_instance_valid(snail):
+				_spawn_waste(snail.global_position, 0.18, WasteParticle.KIND_FISH)
+				snail.queue_free()
+
+		# Specialist grazing - corydoras / algae_grazer cropping algae clusters.
+		# Algae shrink (or get removed entirely) when consumed; drop a tiny
+		# waste particle so the consumed nutrients re-enter the substrate.
+		if ev.has("eat_algae"):
+			var alga = ev["eat_algae"]
+			if is_instance_valid(alga):
+				algae.erase(alga)
+				_spawn_waste(alga.global_position, 0.08, WasteParticle.KIND_FISH)
+				alga.queue_free()
+
 		if ev.get("die", false):
 			# On death, drop a single waste particle worth a bit of nutrient,
 			# then free the fish/shrimp. Closes the biomass -> substrate loop.

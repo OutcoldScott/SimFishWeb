@@ -53,6 +53,37 @@ var nibble_cooldown: float = 0.0
 var target_plant: Plant = null
 var heading_offset: Vector3 = Vector3.ZERO  # personal randomness in schooling
 
+# ---- Body skeleton (heritable) ----
+# These augment the existing body_elongation / body_depth_factor / head_proportion
+# so the same skeleton can produce visually distinct silhouettes:
+#  - barbels       whisker voxels under the head (catfish, loach, cory)
+#  - mouth_orientation
+#                  0 = horizontal (default), +1 = downturned (bottom feeder),
+#                  -1 = upturned (surface feeder)
+#  - eye_size_factor  0.6 (beady) to 1.6 (puffer / killifish bug-eyes)
+#  - ventral_profile  1.0 = symmetric, <1 = flat-bellied (bottom dweller),
+#                   >1 = round-bellied (puffer, gravid)
+#  - back_arch     1.0 = symmetric, >1 = hump-backed (angelfish, gourami)
+#  - tail_shape    0=forked, 1=fan/round, 2=lyre (long top+bottom), 3=square
+#  - armor_plates  cory-style lateral plate accents (dark vertical stripes
+#                  drawn over the body sides)
+var has_barbels: bool = false
+var mouth_orientation: int = 0
+var eye_size_factor: float = 1.0
+var ventral_profile: float = 1.0
+var back_arch: float = 1.0
+var tail_shape: int = 0
+var armor_plates: bool = false
+
+# ---- Food preferences (per-species, not heritable) ----
+# Walstad ecosystem wiring: which species hunt which prey beyond the
+# generic boids brain. The fish brain checks these flags before deciding
+# what to chase.
+#   snail_predator   loach + puffer types preferentially target baby snails
+#   algae_grazer     cory + small herbivores graze algae clusters
+var snail_predator: bool = false
+var algae_grazer: bool = false
+
 # ---- Territory / swim pattern (heritable) ----
 # Each fish has a "home point" it loosely orbits, plus a swim_pattern that
 # controls HOW it moves around that home. Without this, every fish settles
@@ -187,6 +218,17 @@ func init_genome(genome: Dictionary) -> void:
 	tail_fork_depth = genome.get("tail_fork_depth", tail_fork_depth)
 	pattern_type = int(genome.get("pattern_type", pattern_type))
 	color_dot_count = int(genome.get("color_dot_count", color_dot_count))
+	# Body skeleton phenotypes (heritable - drift in produce_offspring_genome).
+	has_barbels = bool(genome.get("has_barbels", has_barbels))
+	mouth_orientation = int(genome.get("mouth_orientation", mouth_orientation))
+	eye_size_factor = float(genome.get("eye_size_factor", eye_size_factor))
+	ventral_profile = float(genome.get("ventral_profile", ventral_profile))
+	back_arch = float(genome.get("back_arch", back_arch))
+	tail_shape = int(genome.get("tail_shape", tail_shape))
+	armor_plates = bool(genome.get("armor_plates", armor_plates))
+	# Food preferences (species-level, not heritable).
+	snail_predator = bool(genome.get("snail_predator", snail_predator))
+	algae_grazer = bool(genome.get("algae_grazer", algae_grazer))
 	# Swim pattern + territory (heritable).
 	swim_pattern = String(genome.get("swim_pattern", swim_pattern))
 	# Apply pattern-derived defaults FIRST so explicit genome values can
@@ -292,17 +334,35 @@ func _build_body() -> void:
 	_bank_pivot.add_child(head)
 	_add_voxel_to(head, Vector3(0, 0, -2.5 * v),
 		Vector3(v * 0.95 * hp, v * 0.9 * hp, v * hp), mat_body)
-	# Forehead - lighter.
-	_add_voxel_to(head, Vector3(0, v * 0.5 * hp, -2.5 * v),
+	# Forehead - lighter. Lifts on hump-backed phenotypes (angelfish, gourami).
+	_add_voxel_to(head, Vector3(0, v * 0.5 * hp * back_arch, -2.5 * v),
 		Vector3(v * 0.6 * hp, v * 0.3 * hp, v * hp), mat_top)
-	# Belly under head.
-	_add_voxel_to(head, Vector3(0, -v * 0.5 * hp, -2.5 * v),
+	# Belly under head. ventral_profile pulls it lower for round-bellied
+	# species (puffer) or tightens it up for flat-bellied bottom dwellers
+	# (cory, loach).
+	_add_voxel_to(head, Vector3(0, -v * 0.5 * hp * ventral_profile, -2.5 * v),
 		Vector3(v * 0.6 * hp, v * 0.3 * hp, v * hp), mat_belly)
-	# Eyes - one on each lateral side of the head.
+	# Eyes - scaled by eye_size_factor. Killifish + puffer get bigger eyes
+	# (1.4+), corydoras + loach get small beady eyes (~0.7).
+	var es: float = eye_size_factor
 	_add_voxel_to(head, Vector3(v * 0.4 * hp, v * 0.1 * hp, -2.4 * v),
-		Vector3(v * 0.2 * hp, v * 0.25 * hp, v * 0.25), mat_eye)
+		Vector3(v * 0.2 * hp * es, v * 0.25 * hp * es, v * 0.25 * es), mat_eye)
 	_add_voxel_to(head, Vector3(-v * 0.4 * hp, v * 0.1 * hp, -2.4 * v),
-		Vector3(v * 0.2 * hp, v * 0.25 * hp, v * 0.25), mat_eye)
+		Vector3(v * 0.2 * hp * es, v * 0.25 * hp * es, v * 0.25 * es), mat_eye)
+	# Mouth indicator: a small accent voxel positioned by mouth_orientation.
+	# +1 = downturned (sifters), -1 = upturned (surface feeders), 0 = neutral.
+	var mouth_y: float = -v * 0.25 * hp * float(mouth_orientation) - v * 0.1 * hp
+	_add_voxel_to(head, Vector3(0, mouth_y, -3.0 * v),
+		Vector3(v * 0.35 * hp, v * 0.2 * hp, v * 0.2 * hp), mat_belly)
+	# Barbels - catfish/loach whiskers. Two pairs of tiny dark voxels under
+	# the mouth, angled forward + down. Only drawn if has_barbels.
+	if has_barbels:
+		var mat_barbel := _make_mat(base_color.darkened(0.5))
+		var barbel_y: float = -v * 0.45 * hp
+		var barbel_z: float = -2.9 * v
+		for x_side in [-0.30, -0.18, 0.18, 0.30]:
+			_add_voxel_to(head, Vector3(x_side * v * hp, barbel_y, barbel_z),
+				Vector3(v * 0.06, v * 0.08, v * 0.25), mat_barbel)
 
 	# ---- BODY MID (gentle counter-wag) - thickest part of the fish ----
 	_body_mid_pivot = Node3D.new()
@@ -310,18 +370,37 @@ func _build_body() -> void:
 	_body_mid_pivot.position = Vector3(0, 0, -1.5 * v)
 	_bank_pivot.add_child(_body_mid_pivot)
 	# Segments at z offsets 0, v, 2v (back along the body from the pivot).
+	# ventral_profile shifts the belly center DOWN for round-bellied species
+	# (puffer); back_arch lifts the top center UP for hump-backed species
+	# (angelfish). Together these let one skeleton produce visibly different
+	# silhouettes.
 	var seg_widths: Array[float] = [1.15, 1.20, 1.0]
 	for i in seg_widths.size():
 		var bw: float = seg_widths[i]
 		var bs: float = v * bw
 		var bz: float = i * v
-		_add_voxel_to(_body_mid_pivot, Vector3(0, 0, bz),
+		# Main body voxel. Slightly off-center if ventral_profile != back_arch.
+		var body_y_offset: float = (back_arch - ventral_profile) * v * 0.15
+		_add_voxel_to(_body_mid_pivot, Vector3(0, body_y_offset, bz),
 			Vector3(bs * 0.95, bs, v), mat_body)
-		# Top + belly accents.
-		_add_voxel_to(_body_mid_pivot, Vector3(0, bs * 0.5, bz),
+		# Top accent - pushed up by back_arch.
+		_add_voxel_to(_body_mid_pivot, Vector3(0, bs * 0.5 * back_arch, bz),
 			Vector3(bs * 0.55, v * 0.25, v), mat_top)
-		_add_voxel_to(_body_mid_pivot, Vector3(0, -bs * 0.5, bz),
+		# Belly accent - pushed down by ventral_profile.
+		_add_voxel_to(_body_mid_pivot, Vector3(0, -bs * 0.5 * ventral_profile, bz),
 			Vector3(bs * 0.55, v * 0.25, v), mat_belly)
+	# Armor plates: cory-style lateral plating. Drawn as 4 thin dark vertical
+	# bars across the lateral midline. Stacks ON TOP of pattern_type, so a
+	# cory with vertical bars + armor reads as a peppered fish in armor.
+	if armor_plates:
+		var mat_armor := _make_mat(base_color.darkened(0.55))
+		for i in seg_widths.size():
+			for x_side in [-1.0, 1.0]:
+				_add_voxel_to(_body_mid_pivot, Vector3(x_side * v * 0.52, 0, i * v),
+					Vector3(v * 0.08, v * 0.95, v * 0.22), mat_armor)
+				_add_voxel_to(_body_mid_pivot,
+					Vector3(x_side * v * 0.52, 0, i * v + v * 0.45),
+					Vector3(v * 0.08, v * 0.95, v * 0.22), mat_armor)
 	# Lateral pattern - varies by pattern_type genotype.
 	# 0 = solid (no accents), 1 = horizontal stripe, 2 = spots, 3 = vertical bars
 	if pattern_type == 1:
@@ -393,20 +472,49 @@ func _build_body() -> void:
 	# Tail peduncle (narrow connector).
 	_add_voxel_to(_tail_pivot, Vector3(0, 0, 0),
 		Vector3(v * 0.5, v * 0.6, v), mat_body)
-	# Forked tail fin - top + bottom prongs. Extent scales with fin_length_factor.
-	# Vertical separation scales with tail_fork_depth - deep-forked tails
-	# (tuna-like) vs shallow rounded tails (goldfish-like).
+	# Tail fin shape - one of four templates picked by `tail_shape`. Each
+	# uses fin_length_factor for overall size + tail_fork_depth for the
+	# fork separation, but the silhouette differs.
+	#   0 = forked     (default - tuna / glassdart - top + bottom prongs)
+	#   1 = fan        (round paddle - guppy / goldfish)
+	#   2 = lyre       (long upper + lower trailing rays - betta / angelfish)
+	#   3 = square     (paddle - corydoras / loach)
 	var fl: float = fin_length_factor
 	var tf: float = tail_fork_depth
-	_add_voxel_to(_tail_pivot, Vector3(0, v * 0.45 * tf, v * (0.9 * fl)),
-		Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
-	_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.45 * tf, v * (0.9 * fl)),
-		Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
-	# Outer fin tips, further back and further apart for forked tails.
-	_add_voxel_to(_tail_pivot, Vector3(0, v * (0.7 * fl * tf), v * (1.4 * fl)),
-		Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
-	_add_voxel_to(_tail_pivot, Vector3(0, v * (-0.7 * fl * tf), v * (1.4 * fl)),
-		Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
+	match tail_shape:
+		1:  # fan / round
+			# 4 voxels arranged in a vertical arc behind the peduncle.
+			for ang in [-0.75, -0.25, 0.25, 0.75]:
+				_add_voxel_to(_tail_pivot,
+					Vector3(0, v * ang * 0.6, v * (0.95 * fl)),
+					Vector3(v * 0.15, v * 0.4, v * (0.55 * fl)), mat_fin)
+		2:  # lyre - long top + bottom trailing rays
+			# Inner pair short, outer pair long + curving outward.
+			_add_voxel_to(_tail_pivot, Vector3(0, v * 0.35 * tf, v * (0.8 * fl)),
+				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_fin)
+			_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.35 * tf, v * (0.8 * fl)),
+				Vector3(v * 0.13, v * 0.35, v * (0.5 * fl)), mat_fin)
+			_add_voxel_to(_tail_pivot,
+				Vector3(0, v * (1.1 * fl * tf), v * (1.7 * fl)),
+				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_fin)
+			_add_voxel_to(_tail_pivot,
+				Vector3(0, v * (-1.1 * fl * tf), v * (1.7 * fl)),
+				Vector3(v * 0.12, v * (0.5 * fl), v * (0.7 * fl)), mat_fin)
+		3:  # square paddle - rounded squarish silhouette
+			_add_voxel_to(_tail_pivot, Vector3(0, 0, v * (0.95 * fl)),
+				Vector3(v * 0.15, v * 1.0, v * (0.7 * fl)), mat_fin)
+		_:  # 0 = forked (default)
+			_add_voxel_to(_tail_pivot, Vector3(0, v * 0.45 * tf, v * (0.9 * fl)),
+				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
+			_add_voxel_to(_tail_pivot, Vector3(0, -v * 0.45 * tf, v * (0.9 * fl)),
+				Vector3(v * 0.15, v * 0.4, v * (0.6 * fl)), mat_fin)
+			# Outer fin tips, further back and further apart for forked tails.
+			_add_voxel_to(_tail_pivot,
+				Vector3(0, v * (0.7 * fl * tf), v * (1.4 * fl)),
+				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
+			_add_voxel_to(_tail_pivot,
+				Vector3(0, v * (-0.7 * fl * tf), v * (1.4 * fl)),
+				Vector3(v * 0.12, v * (0.3 * fl), v * (0.4 * fl)), mat_fin)
 	# Apply body elongation + depth scaling. The bank pivot's local Y stretches
 	# the body height (puffer = 1.4, minnow = 0.7), Z stretches length.
 	if _bank_pivot != null:
@@ -638,6 +746,57 @@ func tick(dt: float, neighbors: Array, plants: Array, waste: Array,
 				desired += to_prey.normalized() * effective_max * 1.2
 				target_velocity = desired.limit_length(effective_max)
 				return events
+
+	# Tier 1.9: SPECIALIST DIET. Loach + puffer hunt baby snails preferentially;
+	# corydoras + algae_grazer species crop algae clusters before they touch
+	# rooted plants. This is the Walstad-style species-specific food web:
+	# different fish fill different niches and prevent any one prey type
+	# (snails, algae) from running away with the tank.
+	if hunger > 0.4 and maturity == MATURITY_ADULT and burst_remaining <= 0.0:
+		if snail_predator and sim != null and sim.get("snails_root") != null:
+			var best_snail: Node3D = null
+			var best_snail_d2: float = 9.0
+			for s in sim.snails_root.get_children():
+				if not is_instance_valid(s) or s.get("is_baby") != true:
+					continue
+				var d2: float = (s.global_position - position).length_squared()
+				if d2 < best_snail_d2:
+					best_snail_d2 = d2
+					best_snail = s
+			if best_snail != null:
+				current_mode = Mode.FORAGE
+				var to_snail: Vector3 = best_snail.global_position - position
+				if best_snail_d2 < 0.25:
+					events["kill_snail"] = best_snail
+					hunger = maxf(0.0, hunger - 0.35)
+				else:
+					if burst_remaining <= 0.0 and energy > 0.3:
+						burst_remaining = 0.35
+					desired += to_snail.normalized() * effective_max * 1.1
+					target_velocity = desired.limit_length(effective_max)
+					return events
+		if algae_grazer and sim != null:
+			var algae_arr = sim.get("algae")
+			if algae_arr != null and algae_arr.size() > 0:
+				var best_alga: Node3D = null
+				var best_alga_d2: float = 6.0
+				for a in algae_arr:
+					if not is_instance_valid(a):
+						continue
+					var d2: float = (a.global_position - position).length_squared()
+					if d2 < best_alga_d2:
+						best_alga_d2 = d2
+						best_alga = a
+				if best_alga != null:
+					current_mode = Mode.FORAGE
+					if best_alga_d2 < 0.25:
+						events["eat_algae"] = best_alga
+						hunger = maxf(0.0, hunger - 0.2)
+					else:
+						var to_alga: Vector3 = best_alga.global_position - position
+						desired += to_alga.normalized() * effective_max * 0.9
+						target_velocity = desired.limit_length(effective_max)
+						return events
 
 	# Tier 2: HUNGRY HERBIVORE. Plants need at least 6 voxels of biomass
 	# (was 12) so fish have more food options before the shrimp graze them
@@ -1156,5 +1315,27 @@ func produce_offspring_genome(partner: Fish) -> Dictionary:
 			+ randf_range(-0.005, 0.005), 0.0, 0.08),
 		"dart_speed_mult": clampf((dart_speed_mult + partner.dart_speed_mult) * 0.5
 			+ randf_range(-0.10, 0.10), 1.0, 2.5),
+		# Skeleton phenotype inheritance. Most params drift continuously;
+		# the booleans (barbels, armor) flip at ~3% mutation rate so lineages
+		# can occasionally lose / gain those features (driven speciation).
+		"has_barbels": (has_barbels if randf() < 0.97
+			else (partner.has_barbels if randf() < 0.5 else not has_barbels)),
+		"armor_plates": (armor_plates if randf() < 0.97
+			else (partner.armor_plates if randf() < 0.5 else not armor_plates)),
+		"mouth_orientation": (mouth_orientation if randf() < 0.93
+			else partner.mouth_orientation if randf() < 0.5
+			else clampi(mouth_orientation + (1 if randf() < 0.5 else -1), -1, 1)),
+		"tail_shape": (tail_shape if randf() < 0.94
+			else partner.tail_shape if randf() < 0.5
+			else randi() % 4),
+		"eye_size_factor": clampf((eye_size_factor + partner.eye_size_factor) * 0.5
+			+ randf_range(-0.10, 0.10), 0.55, 1.7),
+		"ventral_profile": clampf((ventral_profile + partner.ventral_profile) * 0.5
+			+ randf_range(-0.08, 0.08), 0.55, 1.7),
+		"back_arch": clampf((back_arch + partner.back_arch) * 0.5
+			+ randf_range(-0.08, 0.08), 0.65, 1.6),
+		# Food preferences inherited as-is (species-defining, not really mutable).
+		"snail_predator": snail_predator,
+		"algae_grazer": algae_grazer,
 	}
 	return g

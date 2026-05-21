@@ -119,6 +119,8 @@ const SPECIES_LIBRARY: Dictionary = {
 			"body_elongation": 1.10,
 			"body_depth_factor": 0.85,
 			"swim_pattern": "school",
+			"tail_shape": 0,                  # forked - signature tetra tail
+			"eye_size_factor": 1.0,
 		},
 	},
 	"mudsifter": {
@@ -138,11 +140,20 @@ const SPECIES_LIBRARY: Dictionary = {
 			"fecundity": 0.5,
 			"clutch_size": 3,
 			"preferred_y": 2.4,
-			"body_elongation": 1.05,
-			"body_depth_factor": 1.05,
+			"body_elongation": 1.45,             # long snake-like loach body
+			"body_depth_factor": 0.75,
 			"head_proportion": 1.15,
 			"pattern_type": 3,                  # vertical bars
 			"swim_pattern": "shuffle",
+			# Loach skeleton: long body, downturned mouth, barbels, small eyes
+			# and a square paddle tail.
+			"has_barbels": true,
+			"mouth_orientation": 1,
+			"eye_size_factor": 0.7,
+			"ventral_profile": 0.75,            # flat bottom
+			"back_arch": 1.0,
+			"tail_shape": 3,                    # square paddle
+			"snail_predator": true,             # loaches LOVE snails
 		},
 	},
 	"betta": {
@@ -166,6 +177,9 @@ const SPECIES_LIBRARY: Dictionary = {
 			"dorsal_height_factor": 1.35,
 			"tail_fork_depth": 0.7,
 			"swim_pattern": "cruise",
+			"tail_shape": 2,                    # lyre - long flowing trailing rays
+			"eye_size_factor": 1.1,
+			"back_arch": 1.15,                  # mild hump
 		},
 	},
 	"killifish": {
@@ -192,6 +206,12 @@ const SPECIES_LIBRARY: Dictionary = {
 			"pattern_type": 2,
 			"color_dot_count": 3,
 			"swim_pattern": "dart",
+			# Killifish skeleton: upturned mouth for surface feeding, big bug
+			# eyes, slightly arched back, square paddle tail.
+			"mouth_orientation": -1,
+			"eye_size_factor": 1.35,
+			"back_arch": 1.1,
+			"tail_shape": 3,                    # square paddle
 		},
 	},
 	"guppy": {
@@ -217,6 +237,9 @@ const SPECIES_LIBRARY: Dictionary = {
 			"tail_fork_depth": 0.3,
 			"pattern_type": 2,
 			"swim_pattern": "shoal",
+			"tail_shape": 1,                    # fan - signature flowy guppy tail
+			"eye_size_factor": 1.05,
+			"ventral_profile": 1.1,             # slightly round belly
 		},
 	},
 	"pufferfish": {
@@ -245,6 +268,13 @@ const SPECIES_LIBRARY: Dictionary = {
 			"pattern_type": 2,
 			"color_dot_count": 4,
 			"swim_pattern": "meander",
+			# Puffer signature: HUGE bug eyes, round belly, square stubby tail,
+			# no barbels, slight downward mouth (they sucker-mouth onto snails).
+			"eye_size_factor": 1.55,
+			"ventral_profile": 1.45,            # super round belly
+			"back_arch": 1.05,
+			"tail_shape": 3,                    # square paddle
+			"snail_predator": true,             # puffer #1 snail killer
 		},
 	},
 	"danio": {
@@ -268,6 +298,8 @@ const SPECIES_LIBRARY: Dictionary = {
 			"body_depth_factor": 0.75,
 			"pattern_type": 1,
 			"swim_pattern": "school",
+			"tail_shape": 0,                    # forked
+			"eye_size_factor": 1.0,
 		},
 	},
 	"corydoras": {
@@ -293,6 +325,16 @@ const SPECIES_LIBRARY: Dictionary = {
 			"pattern_type": 2,
 			"color_dot_count": 3,
 			"swim_pattern": "shuffle",
+			# Cory signature: barbels under the mouth, armor plating, flat
+			# bottom, small beady eyes, downturned sifter mouth, square tail.
+			"has_barbels": true,
+			"armor_plates": true,
+			"mouth_orientation": 1,
+			"eye_size_factor": 0.75,
+			"ventral_profile": 0.70,            # flat
+			"back_arch": 1.0,
+			"tail_shape": 3,                    # square paddle
+			"algae_grazer": true,               # corydoras graze algae + biofilm
 		},
 	},
 	"angelfish": {
@@ -319,6 +361,11 @@ const SPECIES_LIBRARY: Dictionary = {
 			"tail_fork_depth": 0.9,
 			"pattern_type": 3,
 			"swim_pattern": "hover",
+			# Angelfish signature: tall arched body, lyre tail, mid-sized eyes.
+			"tail_shape": 2,                    # lyre
+			"eye_size_factor": 1.0,
+			"back_arch": 1.45,                  # tall arched silhouette
+			"ventral_profile": 1.15,
 		},
 	},
 }
