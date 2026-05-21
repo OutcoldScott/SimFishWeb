@@ -102,6 +102,17 @@ cd shaders-godot/godot-project
 godot --path . --headless --export-debug "macOS" build/Vivarium.app
 ```
 
+### CI releases (macOS + Windows + Linux)
+
+Pushing a version tag builds all three platforms on GitHub Actions and uploads the zips to [Releases](https://github.com/mhsenkow/SimFish/releases):
+
+```bash
+git tag v0.1.30
+git push origin v0.1.30
+```
+
+Workflow: `.github/workflows/release.yml` (Godot 4.6.3, export presets in `export_presets.cfg`). You can also run it manually from **Actions → Release builds → Run workflow** (artifacts only; no Release unless you pushed a tag).
+
 ## Repository layout
 
 ```
