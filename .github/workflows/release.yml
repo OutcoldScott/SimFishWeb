@@ -59,7 +59,12 @@ jobs:
           unzip -q godot.zip
           curl -fsSL -o templates.tpz \
             "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
-          unzip -q templates.tpz -d "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}"
+          # .tpz unpacks to templates/macos.zip etc.; Godot wants those files
+          # directly under export_templates/4.6.3.stable/, not in a subfolder.
+          tpl_tmp="$(mktemp -d)"
+          unzip -q templates.tpz -d "$tpl_tmp"
+          mv "$tpl_tmp"/templates/* "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}/"
+          rm -rf "$tpl_tmp"
           echo "GODOT_BIN=$HOME/godot/Godot_v${GODOT_VERSION}_linux.x86_64" >> "$GITHUB_ENV"
 
       - name: Install Godot + export templates (macOS)
@@ -72,7 +77,10 @@ jobs:
           unzip -q godot.zip
           curl -fsSL -o templates.tpz \
             "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
-          unzip -q templates.tpz -d "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TEMPLATES_DIR}"
+          tpl_tmp="$(mktemp -d)"
+          unzip -q templates.tpz -d "$tpl_tmp"
+          mv "$tpl_tmp"/templates/* "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TEMPLATES_DIR}/"
+          rm -rf "$tpl_tmp"
           echo "GODOT_BIN=$HOME/godot/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
 
       - name: Install Godot + export templates (Windows)
@@ -86,7 +94,11 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/${env:GODOT_VERSION}/Godot_v${env:GODOT_VERSION}_win64.exe.zip" -OutFile godot.zip
           Expand-Archive -Path godot.zip -DestinationPath . -Force
           Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/${env:GODOT_VERSION}/Godot_v${env:GODOT_VERSION}_export_templates.tpz" -OutFile templates.tpz
-          Expand-Archive -Path templates.tpz -DestinationPath $templatesRoot -Force
+          $tplTmp = Join-Path $env:TEMP "godot-export-templates"
+          if (Test-Path $tplTmp) { Remove-Item -Recurse -Force $tplTmp }
+          Expand-Archive -Path templates.tpz -DestinationPath $tplTmp -Force
+          Move-Item -Path (Join-Path $tplTmp "templates\*") -Destination $templatesRoot -Force
+          Remove-Item -Recurse -Force $tplTmp
           "GODOT_BIN=$godotRoot\Godot_v${env:GODOT_VERSION}_win64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Import project assets
