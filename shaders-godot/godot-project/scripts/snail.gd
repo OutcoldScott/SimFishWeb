@@ -54,6 +54,18 @@ var _t_until_breed: float = 0.0
 # forward "step" added to the slide velocity. The fast-moving snails have
 # more visible pulses; paused snails don't pulse.
 var _pulse_phase: float = 0.0
+# Eye-stalk animation. Found by name in _ready (the world's
+# _build_snail_body creates a Node3D named "EyeStalks" wrapping the two
+# stalk voxels). Stalks sway gently with a slow phase, and occasionally
+# retract briefly — mimicking the real-life "stalk pull" snails do when
+# disturbed or while reorienting.
+var _eye_stalks: Node3D = null
+var _eye_phase: float = 0.0
+var _eye_retract_timer: float = 0.0
+var _eye_retract_remaining: float = 0.0
+const EYE_RETRACT_INTERVAL_MIN: float = 6.0
+const EYE_RETRACT_INTERVAL_MAX: float = 14.0
+const EYE_RETRACT_DURATION: float = 0.8
 # Shell-retraction defense. Real snails clamp the foot into the shell and
 # go still when a predator brushes past. Set true while a snail_predator
 # (loach / puffer) is within CLAMP_RADIUS. Movement is suspended and the
@@ -69,6 +81,9 @@ func _ready() -> void:
 	_facing = _direction
 	_t_until_breed = randf_range(BREEDING_INTERVAL_MIN, BREEDING_INTERVAL_MAX)
 	_pulse_phase = randf() * TAU
+	_eye_phase = randf() * TAU
+	_eye_retract_timer = randf_range(EYE_RETRACT_INTERVAL_MIN, EYE_RETRACT_INTERVAL_MAX)
+	_eye_stalks = get_node_or_null("EyeStalks") as Node3D
 	if is_baby:
 		scale = Vector3.ONE * 0.5
 
@@ -96,6 +111,14 @@ func _process(dt: float) -> void:
 	# We re-scan every tick rather than caching threats so a moving puffer
 	# trips the clamp the moment it crosses the radius.
 	_check_predator_threat(dt)
+
+	# Eye stalk animation runs in every state (clamped, paused, crawling).
+	# Slow sway is the resting wiggle real snails do as they sense around;
+	# periodic retraction is the brief stalk-pull when they reset their
+	# field of view. While the body is clamped into the shell, the stalks
+	# are pulled in entirely (scale 0). Movement-state independent so the
+	# tank doesn't go visually dead when snails pause.
+	_tick_eye_stalks(dt)
 
 	# When clamped we suspend movement entirely - foot's pulled in, no
 	# crawling, no foraging, no breeding decision needed. Skip the rest
@@ -294,6 +317,45 @@ func _lay_egg_sac() -> void:
 	sac.set("inherited_shell_color", new_color)
 	sac.set("inherited_shell_size", new_size)
 	sac.set("inherited_generation", generation + 1)
+
+
+func _tick_eye_stalks(dt: float) -> void:
+	if _eye_stalks == null:
+		return
+	_eye_phase += dt * 1.8
+	# Scheduled retraction: every EYE_RETRACT_INTERVAL_*, briefly pull
+	# the stalks in over EYE_RETRACT_DURATION before letting them re-
+	# extend. Don't restart the cycle while we're already in a retract.
+	if _eye_retract_remaining > 0.0:
+		_eye_retract_remaining = maxf(0.0, _eye_retract_remaining - dt)
+	else:
+		_eye_retract_timer = maxf(0.0, _eye_retract_timer - dt)
+		if _eye_retract_timer <= 0.0:
+			_eye_retract_remaining = EYE_RETRACT_DURATION
+			_eye_retract_timer = randf_range(
+				EYE_RETRACT_INTERVAL_MIN, EYE_RETRACT_INTERVAL_MAX)
+	# Stalk extension factor.
+	#   1.0  fully extended (default)
+	#   0.0  fully retracted (clamped or mid-pull)
+	# When predator-clamped, force-retract for the duration of the clamp.
+	# During a scheduled retract, ease in/out so the pull reads as a
+	# smooth pinch rather than a snap.
+	var ext: float = 1.0
+	if _clamped:
+		ext = 0.0
+	elif _eye_retract_remaining > 0.0:
+		var t: float = 1.0 - (_eye_retract_remaining / EYE_RETRACT_DURATION)
+		# Bell-shape: 0 → 1 → 0 over the duration, so we retract then re-extend.
+		ext = 1.0 - sin(t * PI)
+		ext = maxf(0.15, ext)
+	# Slow sway (resting wiggle), suppressed during retraction.
+	var sway_y: float = sin(_eye_phase) * 0.18 * ext
+	var sway_x: float = sin(_eye_phase * 0.7 + 1.1) * 0.10 * ext
+	_eye_stalks.rotation.y = sway_y
+	_eye_stalks.rotation.x = sway_x
+	# Scale the stalks along Y so they visually pull into the body
+	# during retraction. Width stays steady so they don't look thinner.
+	_eye_stalks.scale = Vector3(1.0, lerpf(0.1, 1.0, ext), 1.0)
 
 
 func _check_predator_threat(dt: float) -> void:

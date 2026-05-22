@@ -768,10 +768,16 @@ func _build_snail_body(snail: Node3D) -> void:
 	else:
 		foot_size = Vector3(0.24 * shell_size, 0.06 * shell_size, 0.16 * shell_size)
 	_add_cube(snail, Vector3(0, foot_y, 0), foot_size, body_mat)
-	# Eye stalks - keep them at a fixed small size for visibility.
-	_add_cube(snail, Vector3(0.10, -0.06 * shell_size, 0.06),
+	# Eye stalks - wrapped in a named pivot so snail.gd can animate them
+	# (slow sway, periodic retraction). Keep size fixed for visibility.
+	# Pivot sits at the stalk base so rotation tilts the eyes naturally.
+	var eye_stalks := Node3D.new()
+	eye_stalks.name = "EyeStalks"
+	eye_stalks.position = Vector3(0.10, -0.06 * shell_size, 0)
+	snail.add_child(eye_stalks)
+	_add_cube(eye_stalks, Vector3(0.0, 0.05 * shell_size, 0.06),
 		Vector3(0.03, 0.10 * shell_size, 0.03), body_mat)
-	_add_cube(snail, Vector3(0.10, -0.06 * shell_size, -0.06),
+	_add_cube(eye_stalks, Vector3(0.0, 0.05 * shell_size, -0.06),
 		Vector3(0.03, 0.10 * shell_size, 0.03), body_mat)
 
 

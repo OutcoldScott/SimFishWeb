@@ -123,6 +123,23 @@ var anal_fin_length_factor: float = 0.5
 var adipose_fin: bool = false
 var snout_pointed: bool = false
 var body_shape: String = "fusiform"
+# Swimming style. Derived from body_shape at init unless the genome
+# overrides explicitly. Drives the per-frame animation amplitudes so
+# different body silhouettes move in physically appropriate ways:
+#   "subcarangiform"  Default. Rear half undulates, head stays mostly
+#                     still. Tetras, danios, glassdarts, killifish.
+#   "anguilliform"    Eel-like whole-body traveling wave from head to
+#                     tail. Loaches, kuhlis, mudsifters.
+#   "ostraciiform"    Rigid body, only the tail oscillates. Boxfish
+#                     style — pufferfish in this sim.
+#   "labriform"       Pectoral-fin rowing as the primary thrust;
+#                     tail/body subdued. Reef tang / angelfish style
+#                     where the laterally-compressed body relies on
+#                     pec-fin strokes.
+#   "thunniform"      Stiff body, narrow high-frequency tail. Tuna-
+#                     style cruisers. Not assigned by default but
+#                     available for custom genomes.
+var locomotion_type: String = "subcarangiform"
 
 # ---- Food preferences (per-species, not heritable) ----
 # Walstad ecosystem wiring: which species hunt which prey beyond the
@@ -230,6 +247,13 @@ var burst_remaining: float = 0.0
 # automatically when courtship ends or the fish moves out of display
 # range.
 var _courtship_flare: bool = false
+# Sync pulse window — true only during the final pre-spawn beats. Both
+# fish puff up + flare in unison so the moment the eggs drop reads as
+# its own visual event (rather than ambient swimming → eggs appearing).
+var _courtship_sync: bool = false
+# Independent phase for courtship body pulses so the "puff up" shimmer
+# isn't locked to the swim-tail wag rhythm.
+var _courtship_pulse_phase: float = 0.0
 # Aerial respiration: cories + loaches periodically dart to the surface to
 # gulp atmospheric air, then sink back to the substrate. Real Walstad
 # behavior - it's a stress signal in healthy tanks but routine in any
@@ -288,6 +312,7 @@ var target_velocity: Vector3 = Vector3.ZERO
 var _bank_pivot: Node3D = null
 var _tail_pivot: Node3D = null
 var _body_mid_pivot: Node3D = null
+var _head_pivot: Node3D = null
 var _dorsal_pivot: Node3D = null
 var _pec_left_pivot: Node3D = null
 var _pec_right_pivot: Node3D = null
@@ -401,6 +426,21 @@ func init_genome(genome: Dictionary) -> void:
 	adipose_fin = bool(genome.get("adipose_fin", adipose_fin))
 	snout_pointed = bool(genome.get("snout_pointed", snout_pointed))
 	body_shape = String(genome.get("body_shape", body_shape))
+	# Locomotion derives from body_shape unless explicitly overridden in
+	# the genome. The match expresses the real-world correlation between
+	# a fish's silhouette and how it produces thrust.
+	if genome.has("locomotion_type"):
+		locomotion_type = String(genome["locomotion_type"])
+	else:
+		match body_shape:
+			"anguilliform":
+				locomotion_type = "anguilliform"
+			"globiform":
+				locomotion_type = "ostraciiform"
+			"compressed":
+				locomotion_type = "labriform"
+			_:
+				locomotion_type = "subcarangiform"
 	# Food preferences (species-level, not heritable).
 	snail_predator = bool(genome.get("snail_predator", snail_predator))
 	algae_grazer = bool(genome.get("algae_grazer", algae_grazer))
@@ -582,13 +622,19 @@ func _build_body() -> void:
 	_bank_pivot.name = "BankPivot"
 	add_child(_bank_pivot)
 
-	# ---- HEAD (rigid, at z = -2.5v, the front of the fish) ----
+	# ---- HEAD (animatable via _head_pivot) ----
 	# head_proportion scales the head's overall size relative to the body,
 	# so small-headed minnow types contrast against big-headed cichlids.
+	# Anguilliform locomotion drives _head_pivot.rotation.y through a
+	# head-leading sine wave so the whole body undulates head-to-tail.
+	# Pivot stays at the bank_pivot origin; head voxels are 2.5v ahead,
+	# so a small Y rotation makes the head swing laterally — exactly
+	# the eel head-shake motion.
 	var hp: float = head_proportion
-	var head := Node3D.new()
-	head.name = "Head"
-	_bank_pivot.add_child(head)
+	_head_pivot = Node3D.new()
+	_head_pivot.name = "Head"
+	_bank_pivot.add_child(_head_pivot)
+	var head: Node3D = _head_pivot
 	_add_voxel_to(head, Vector3(0, 0, -2.5 * v),
 		Vector3(v * 0.95 * hp, v * 0.9 * hp, v * hp), mat_body)
 	# Forehead - lighter. Lifts on hump-backed phenotypes (angelfish, gourami).
@@ -1071,6 +1117,7 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			partner = null
 			court_timer = 0.0
 			_courtship_flare = false
+			_courtship_sync = false
 		else:
 			current_mode = Mode.COURT
 			var to_partner: Vector3 = partner.position - position
@@ -1097,21 +1144,40 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			else:
 				desired += (courtship_target - position).normalized() * effective_max * 0.7
 				_courtship_flare = false
+			# Female receptivity. While the male flashes side-by-side, the
+			# female slows + holds station (real fish behavior - she's
+			# evaluating the male's display). Subtle pull-back so she
+			# isn't chasing.
+			if sex == 1 and dist < 1.5:
+				desired *= 0.55
 			court_timer += dt
+			# Final-beat sync window: both fish puff up + flare in unison
+			# in the last 0.5s before egg drop. The render pass picks
+			# this up as a bigger pulse so the spawn moment reads visually.
+			var pre_spawn: bool = court_timer >= COURT_DURATION - 0.5 and dist < 1.6
+			_courtship_sync = pre_spawn
+			if pre_spawn and partner != null:
+				partner._courtship_sync = true
 			# Spawn when we've been close enough for long enough.
 			if dist < 1.2 and court_timer >= COURT_DURATION:
 				current_mode = Mode.SPAWN
 				events["lay_egg_with"] = partner
 				breed_cooldown = 35.0
 				energy = maxf(0.0, energy - 0.35)
+				# Post-spawn burst: both fish dart apart visibly. Gives
+				# the moment a clean "and we're done" punctuation
+				# instead of cleanly resuming cruise.
+				burst_remaining = 0.4
 				partner.breed_cooldown = 35.0
 				partner.energy = maxf(0.0, partner.energy - 0.35)
+				partner.burst_remaining = 0.4
 				breed_count += 1
 				partner.breed_count += 1
 				partner.partner = null
 				partner = null
 				court_timer = 0.0
 				_courtship_flare = false
+				_courtship_sync = false
 			target_velocity = desired.limit_length(effective_max)
 			return events
 
@@ -1647,8 +1713,13 @@ func _process(dt: float) -> void:
 		var pitch_target: float = 0.0
 		if _sift_timer > 0.0:
 			pitch_target = 0.55
-		elif _courtship_flare:
-			pitch_target = -0.12   # nose slightly up for the parade swim
+		elif _courtship_flare and sex == 0:
+			pitch_target = -0.14   # male: nose up for the parade display
+		elif partner != null and sex == 1:
+			# Female receptivity tilt: slight nose-down + look toward the
+			# courting male. Real females signal acceptance with a head-
+			# down "approach me" pose during the dance.
+			pitch_target = 0.05
 		elif maturity == MATURITY_SENESCENT:
 			# Old fish lose buoyancy control - nose tips downward as they
 			# drift toward the substrate, a recognisable "dying fish" pose
@@ -1662,22 +1733,92 @@ func _process(dt: float) -> void:
 			clampf(dt * 4.0, 0.0, 1.0))
 
 	# ---- Swim animation ----
-	# Tail wag scales with speed. Hovering fish pulse slowly, dashing fast.
-	# Independent fin pivots add full-body life: pectoral fins flutter at a
-	# faster frequency offset by 90 degrees for left/right (rowing motion),
-	# dorsal/anal fins sway gently with the body's counter-wag.
-	# Courtship-display fish wag faster + flare wider so the dance reads.
+	# Per-locomotion amplitudes + phase relationships. Real fish use very
+	# different propulsion strategies based on body shape; we drive the
+	# three-segment chain (head → body_mid → tail) and the pectoral fins
+	# differently per locomotion_type so loaches actually undulate like
+	# eels, puffers stiffly paddle their tails, reef tangs row with
+	# their pec fins, and the default schoolers carangiform-wag.
 	var wag_freq: float = 2.5 + speed * 5.5
 	var wag_amp_extra: float = 0.0
+	var pec_amp_extra: float = 0.0
 	if _courtship_flare:
 		wag_freq *= 1.4
 		wag_amp_extra = 0.25
+		# Pectoral fins flare wider during display - real courting fish
+		# spread their pec fins maximally to look bigger / fitter.
+		pec_amp_extra = 0.30
+	# Pre-spawn sync window: both fish puff up + flare in unison the
+	# beat before egg drop. Drives the body pulse and a brief extra
+	# pec spread so the spawn moment reads as a flash.
+	if _courtship_sync:
+		wag_amp_extra += 0.20
+		pec_amp_extra += 0.25
+
+	# Per-locomotion tuning. Phase offsets are measured FROM the tail's
+	# sin(phase) reference. Positive offset = that segment leads the tail.
+	# A traveling head→tail wave needs head leading, body mid leading by
+	# half, tail trailing — values below produce that for anguilliform.
+	var tail_amp: float = 0.35
+	var body_amp: float = 0.10
+	var body_phase: float = PI       # default = counter-wag (180° out of phase)
+	var head_amp: float = 0.0
+	var head_phase: float = 0.0
+	var pec_amp_base: float = 0.45
+	var pec_freq_base: float = 4.5 + speed * 3.0
+	match locomotion_type:
+		"anguilliform":
+			# Eel / loach style: whole-body traveling sine wave. Head
+			# leads, body mid follows ~50° behind, tail trails ~100°
+			# behind the head. Slower base frequency, larger amplitudes.
+			wag_freq = 1.8 + speed * 3.5
+			tail_amp = 0.55
+			body_amp = 0.40
+			body_phase = -0.55 * PI    # body lags tail by 100° → traveling wave
+			head_amp = 0.30
+			head_phase = -1.1 * PI     # head leads tail by ~80°
+			pec_amp_base = 0.20        # pec fins almost still on eels
+		"ostraciiform":
+			# Boxfish / puffer: rigid body, only the tail oscillates.
+			# Higher tail frequency to make up for the small amplitude
+			# and lack of body assist. Pec fins do most of the steering.
+			wag_freq = 3.5 + speed * 6.0
+			tail_amp = 0.42
+			body_amp = 0.02
+			head_amp = 0.0
+			pec_amp_base = 0.80
+		"labriform":
+			# Reef tang / angelfish: pectoral fins are the primary
+			# thrust, tail subdued. Pec fins beat at a higher
+			# frequency independent of the body wag.
+			tail_amp = 0.18
+			body_amp = 0.04
+			head_amp = 0.0
+			pec_amp_base = 1.05
+			pec_freq_base = 5.5 + speed * 4.5
+		"thunniform":
+			# Tuna cruiser: stiff body, narrow but fast tail.
+			wag_freq = 3.0 + speed * 7.0
+			tail_amp = 0.25
+			body_amp = 0.03
+			head_amp = 0.0
+			pec_amp_base = 0.30
+		_:
+			# subcarangiform default — current schooler behavior.
+			pass
+
 	_swim_phase += dt * wag_freq
 	if _tail_pivot != null:
-		_tail_pivot.rotation.y = sin(_swim_phase) * (0.35 + wag_amp_extra \
+		_tail_pivot.rotation.y = sin(_swim_phase) * (tail_amp + wag_amp_extra \
 			+ minf(speed * 0.18, 0.25))
 	if _body_mid_pivot != null:
-		_body_mid_pivot.rotation.y = -sin(_swim_phase) * (0.10 + wag_amp_extra * 0.4)
+		_body_mid_pivot.rotation.y = sin(_swim_phase + body_phase) \
+			* (body_amp + wag_amp_extra * 0.4)
+	if _head_pivot != null:
+		# Smooth head rotation in to avoid pop when locomotion changes.
+		var head_target: float = sin(_swim_phase + head_phase) * head_amp
+		_head_pivot.rotation.y = lerpf(_head_pivot.rotation.y, head_target,
+			clampf(dt * 12.0, 0.0, 1.0))
 	# Dorsal: small sway with the body counter-wag, faster small flutter on top.
 	if _dorsal_pivot != null:
 		_dorsal_pivot.rotation.x = sin(_swim_phase * 1.3) * 0.08
@@ -1685,14 +1826,38 @@ func _process(dt: float) -> void:
 	if _anal_pivot != null:
 		_anal_pivot.rotation.x = -sin(_swim_phase * 1.3) * 0.10
 	# Pectoral fins: faster rowing flutter. Each side offset by PI/2 so the
-	# motion looks like a continuous paddle, more visible at low speeds when
-	# the fish is hovering (real fish use pectorals to hover/brake).
-	var pec_freq: float = 4.5 + speed * 3.0
-	var pec_amp: float = 0.45 - minf(speed * 0.12, 0.30)
+	# motion looks like a continuous paddle. Labriform / ostraciiform get
+	# bigger amplitude because their bodies don't propel — the pecs do.
+	var pec_freq: float = pec_freq_base
+	var pec_amp: float = pec_amp_base + pec_amp_extra - minf(speed * 0.12, 0.30)
+	pec_amp = maxf(pec_amp, 0.10)
 	if _pec_right_pivot != null:
 		_pec_right_pivot.rotation.z = sin(_swim_phase * pec_freq / wag_freq) * pec_amp
 	if _pec_left_pivot != null:
 		_pec_left_pivot.rotation.z = -sin(_swim_phase * pec_freq / wag_freq + PI * 0.5) * pec_amp
+
+	# ---- Courtship body pulse ----
+	# Subtle scale shimmy that reads as "puffing up" during display.
+	# Independent of swim_phase so the pulse doesn't lock to the tail
+	# wag. Stronger for males during display, biggest during the sync
+	# window. Returns the bank pivot to unit scale when no display
+	# is active so non-courting fish stay clean.
+	if _bank_pivot != null:
+		var display_amp: float = 0.0
+		if _courtship_flare:
+			display_amp = 0.05 if sex == 0 else 0.025
+		if _courtship_sync:
+			display_amp += 0.06
+		if display_amp > 0.0:
+			_courtship_pulse_phase += dt * 7.0
+			var pulse: float = 1.0 + sin(_courtship_pulse_phase) * display_amp
+			# Apply differentially: width swells more than length so the
+			# fish reads as fuller-bodied, not stretched.
+			_bank_pivot.scale = Vector3(pulse, pulse * 0.6 + 0.4, 1.0)
+		elif not is_equal_approx(_bank_pivot.scale.x, 1.0):
+			# Ease back to normal scale when not displaying.
+			_bank_pivot.scale = _bank_pivot.scale.lerp(Vector3.ONE,
+				clampf(dt * 6.0, 0.0, 1.0))
 
 
 func _update_maturity() -> void:

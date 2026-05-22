@@ -683,13 +683,26 @@ func _process(dt: float) -> void:
 	if _bank_pivot != null:
 		_bank_pivot.rotation.z = _bank
 
-	# Animation: tail flicks + antennae twitch.
+	# Animation: tail flicks + antennae twitch + walking bob.
 	_swim_phase += dt * (3.0 + speed * 4.0)
+	# Tail-flick amplitude scales sharply with speed. A calm shrimp barely
+	# twitches its tail; a spooked or fleeing shrimp executes the classic
+	# big rapid "tail flip" escape - real shrimp use this to shoot
+	# backwards away from predators.
+	var tail_amp: float = 0.12 + minf(speed * 0.45, 0.45)
 	if _tail_pivot != null:
-		_tail_pivot.rotation.x = sin(_swim_phase) * 0.15
+		_tail_pivot.rotation.x = sin(_swim_phase) * tail_amp
 	if _antenna_pivot != null:
 		_antenna_pivot.rotation.y = sin(_swim_phase * 1.7) * 0.20
 		_antenna_pivot.rotation.x = sin(_swim_phase * 2.1) * 0.10
+	# Walking bob: a small vertical pulse at twice the tail frequency
+	# mimics the alternating-leg gait of crawling. Suppressed at very
+	# low speeds (resting) and at high speeds (the shrimp is tail-
+	# flipping above substrate, legs aren't doing the work).
+	if _bank_pivot != null and _molt_flash <= 0.0:
+		var walk_factor: float = clampf(speed * 5.0, 0.0, 1.0) \
+			* clampf(1.0 - speed * 0.55, 0.0, 1.0)
+		_bank_pivot.position.y = sin(_swim_phase * 2.0) * 0.014 * walk_factor
 
 	# Egg-cluster visibility: visible only during the gravid window.
 	if _egg_cluster != null and _egg_cluster.visible != is_gravid:
