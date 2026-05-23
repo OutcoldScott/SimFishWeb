@@ -152,7 +152,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p build
-          "$GODOT_BIN" --headless --path "${{ env.PROJECT_PATH }}" --export-release "${{ matrix.preset }}"
+          if [ "${{ matrix.preset }}" == "Android" ]; then
+            "$GODOT_BIN" --headless --path "${{ env.PROJECT_PATH }}" --export-debug "${{ matrix.preset }}"
+          else
+            "$GODOT_BIN" --headless --path "${{ env.PROJECT_PATH }}" --export-release "${{ matrix.preset }}"
+          fi
 
       - name: Package macOS
         if: matrix.name == 'macOS'
