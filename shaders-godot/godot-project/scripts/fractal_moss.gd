@@ -114,15 +114,74 @@ func _build_node(local_pos: Vector3, size: float, gen: int, parent: Node3D,
 
 
 func _rebuild_at_depth(new_depth: int) -> void:
-	# Clear existing voxels and rebuild the whole fractal at the new depth.
-	for v in _all_voxels:
-		if is_instance_valid(v):
-			v.queue_free()
-	_all_voxels.clear()
-	_outermost_voxels.clear()
-	_tip_positions.clear()
-	_current_depth = new_depth
-	_build_node(Vector3.ZERO, VOXEL_SIZE, 0, self)
+	# APPENDATIVE GROWTH. Previously this nuked every voxel and re-built the
+	# whole fractal with fresh random angles, so every growth step (every
+	# 8s) visibly *popped* and shuffled the cluster — the player could see
+	# moss flicker into a different shape every time it grew. Now we keep
+	# all existing voxels and only spawn new ones off the previous
+	# outermost generation, demoting the old outermost back to its natural
+	# (un-lightened) ramp color so the highlight tracks the actual growing
+	# tip rather than the whole tree.
+	if new_depth <= _current_depth:
+		return
+
+	# Demote the previous outermost voxels: re-color them to ramp[_current_depth]
+	# without the +0.15 lightening that marked them as "new growth."
+	if ramp.size() >= 5:
+		var natural_idx: int = clampi(_current_depth, 0, ramp.size() - 1)
+		var natural_color: Color = ramp[natural_idx]
+		for v in _outermost_voxels:
+			if not is_instance_valid(v):
+				continue
+			var mat: Material = v.material_override
+			if mat is StandardMaterial3D:
+				(mat as StandardMaterial3D).albedo_color = natural_color
+
+	var prev_tip_positions: Array[Vector3] = _tip_positions.duplicate()
+	_outermost_voxels = []
+	_tip_positions = []
+	# Step depth by one — incremental growth, not a full re-leap.
+	_current_depth = mini(_current_depth + 1, new_depth)
+	var size: float = VOXEL_SIZE * pow(shrink, _current_depth)
+	for parent_pos in prev_tip_positions:
+		_spawn_children_off(parent_pos, size, _current_depth)
+
+
+func _spawn_children_off(parent_pos: Vector3, size: float, gen: int) -> void:
+	# Emit up to `children` new voxels at random offsets off `parent_pos`.
+	# This mirrors the recursive spawn in `_build_node` but without
+	# rebuilding everything below — it's how a new generation is appended.
+	if size < VOXEL_SIZE * 0.35:
+		return
+	var parent_size: float = size / shrink
+	var color: Color
+	if ramp.size() >= 5:
+		var idx: int = clampi(gen, 0, ramp.size() - 1)
+		color = ramp[idx].lightened(0.15)
+	else:
+		color = Color8(60, 130, 70).lightened(0.15)
+	for c in children:
+		if randf() > 0.85:
+			# Mild thinning so the tree doesn't double-cover itself.
+			continue
+		var theta: float = randf_range(-spread, spread)
+		var phi: float = randf_range(-spread, spread)
+		var dir: Vector3 = Vector3(
+			sin(theta) * cos(phi),
+			cos(theta) * cos(phi),
+			sin(phi),
+		)
+		var child_pos: Vector3 = parent_pos + dir * parent_size * 0.9
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(size, size, size)
+		mi.mesh = bm
+		mi.material_override = _make_mat(color)
+		mi.position = child_pos
+		add_child(mi)
+		_all_voxels.append(mi)
+		_outermost_voxels.append(mi)
+		_tip_positions.append(child_pos)
 
 
 func tick(dt: float) -> void:

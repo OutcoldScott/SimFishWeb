@@ -136,7 +136,20 @@
       "Bash(git -C /Users/powerox/iAquarium tag v0.1.28)",
       "Bash(git -C /Users/powerox/iAquarium push origin v0.1.28)",
       "Bash(git -C /Users/powerox/iAquarium tag v0.1.29)",
-      "Bash(git -C /Users/powerox/iAquarium push origin v0.1.29)"
+      "Bash(git -C /Users/powerox/iAquarium push origin v0.1.29)",
+      "Bash(grep -n \"return\\\\|if.*return\" /Users/photoox/iAquarium/shaders-godot/godot-project/scripts/main.gd | grep -A2 -B2 \"pick\\\\|portal\" 2>/dev/null | head -30)",
+      "Bash(grep -v \":0$\")",
+      "Bash(awk 'NR>=601 && NR<=623' /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/plant.gd)",
+      "Bash(awk 'NR>=200 && NR<=265' /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/shrimp.gd)",
+      "Bash(awk 'NR>=995 && NR<=1080' /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/main.gd)",
+      "Bash(awk 'NR>=200 && NR<=500 && /return events/{print NR\": \"$0}' /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/shrimp.gd)",
+      "Bash(awk '/^func / {fn=$0; ln=NR} /^[^ \\\\t]/ && NR>ln && fn { print ln\": \"fn; fn=\"\"}' /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/fish.gd)",
+      "Bash(git tag *)",
+      "Bash(grep -n \"_paused\\\\|_clamped\\\\|return$\\\\|_apply_squash\" /Users/powerox/iAquarium/shaders-godot/godot-project/scripts/snail.gd)",
+      "Bash(/Applications/Godot.app/Contents/MacOS/Godot --headless --check-only --quit-after 1 --path .)",
+      "Bash(timeout 15 /Applications/Godot.app/Contents/MacOS/Godot --headless --path . main.tscn)",
+      "Bash(timeout 8 /Applications/Godot.app/Contents/MacOS/Godot --headless --path . main.tscn)",
+      "Bash(timeout 10 /Applications/Godot.app/Contents/MacOS/Godot --headless --path . main.tscn)"
     ]
   }
 }

@@ -99,7 +99,12 @@ func _build_seed_head() -> void:
 
 
 func _add_leaf_blade(leaf_index: int) -> void:
-	var base_y: float = float(_current_height) * VOXEL_SIZE * 0.5
+	# Anchor the leaf base at the current stalk height. The stalk voxels are
+	# placed with multiplier 0.95 (see `_add_stalk_voxel`), so the leaf must
+	# use the same multiplier or it floats in mid-air detached from the
+	# stalk — previously this was 0.5, which put every leaf attaching at
+	# ~53% of the rendered stalk height.
+	var base_y: float = float(_current_height) * VOXEL_SIZE * 0.95
 	var leaf_angle: float = (float(leaf_index) / 3.0) * TAU
 	var leaf_pivot := Node3D.new()
 	leaf_pivot.position = Vector3(0, base_y, 0)

@@ -146,6 +146,19 @@ pre code {
   color: var(--ink-dim);
 }
 
+.dl-android {
+  border-color: #3ddc84;
+}
+
+.dl-android:hover {
+  border-color: #3ddc84;
+  background: #1a3530;
+}
+
+.dl-android .platform {
+  color: #3ddc84;
+}
+
 .releases-link {
   font-size: 14px;
   color: var(--ink-dim);

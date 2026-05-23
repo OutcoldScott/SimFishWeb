@@ -126,6 +126,44 @@ const PICK_RADIUS_PX: float = 48.0
 const PORTAL_PICK_RADIUS_PX: float = 72.0
 const RAY_PICK_RADIUS: float = 2.0
 
+# ---- Touch input state ----
+# Active touch points keyed by finger index → current screen position.
+var _touches: Dictionary = {}
+var _touch_prev: Dictionary = {}  # previous frame positions for delta calc
+# Pinch zoom: distance between two fingers on the previous frame.
+var _pinch_distance: float = 0.0
+# Tap detection: time and position when the first finger went down.
+var _tap_start_time: float = 0.0
+var _tap_start_pos: Vector2 = Vector2.ZERO
+var _tap_moved: float = 0.0  # cumulative drag distance since touch-down
+# Double-tap detection.
+var _last_tap_time: float = -1.0
+var _last_tap_pos: Vector2 = Vector2.ZERO
+const DOUBLE_TAP_WINDOW: float = 0.4  # seconds
+const DOUBLE_TAP_RADIUS: float = 40.0  # pixels
+# Long-press detection.
+var _long_press_fired: bool = false
+const LONG_PRESS_TIME: float = 0.5  # seconds
+const TAP_MAX_MOVE: float = 20.0  # pixels; beyond this it's a drag, not a tap
+const TAP_MAX_TIME: float = 0.25  # seconds
+# Touch sensitivity (slightly higher than mouse because fingers are less precise).
+const TOUCH_ORBIT_SENSITIVITY: float = 0.004
+const TOUCH_PAN_SENSITIVITY: float = 0.015
+const PINCH_ZOOM_SENSITIVITY: float = 0.008
+# Flag: true while any finger is touching the screen. Used to suppress
+# mouse-polling so emulated mouse events from touch don't double-fire.
+var _touch_active: bool = false
+# Mobile HUD reference (wired in _ready if the node exists).
+var _mobile_hud: Control = null
+
+
+func _is_mobile() -> bool:
+	return OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
+
+
+func _is_touch_active() -> bool:
+	return _touch_active
+
 
 func _ready() -> void:
 	# Apply render-config values BEFORE the SubViewport assigns its texture
@@ -161,6 +199,10 @@ func _ready() -> void:
 			_portal_mat = portal_display.material as ShaderMaterial
 	if portal_viewport != null:
 		portal_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	
+	# ---- Mobile setup ----
+	if _is_mobile():
+		_setup_mobile_ui()
 
 
 func _toggle_portal() -> void:
@@ -246,135 +288,23 @@ func _process(dt: float) -> void:
 	# Tick the aquascape brush cooldown so drag-painting deposits voxels
 	# at a steady rate regardless of frame timing.
 	_paint_cooldown = maxf(0.0, _paint_cooldown - dt)
-	# Mouse position: use the WINDOW's mouse position (not the SubViewport's),
-	# since that's where the OS cursor actually lives. get_window() returns
-	# this scene's OS window.
-	var mouse_now: Vector2 = get_window().get_mouse_position()
-	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	var mmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)
-	var rmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
-	# Pan modifier = either Shift OR Space held. Photoshop / Figma users have
-	# "hold space to pan" in their muscle memory; CAD / DCC users reach for
-	# Shift. Support both so neither group has to think.
-	var pan_modifier: bool = Input.is_key_pressed(KEY_SHIFT) \
-		or Input.is_key_pressed(KEY_SPACE)
-	var any_btn: bool = lmb or mmb or rmb
-	# Clear the pick-suppression flag the moment all buttons are released.
-	# (Set in `_input` when an LMB-down event hit a creature.)
-	if not any_btn:
-		_suppress_drag_until_release = false
-
-	if any_btn and not _orbiting and not _suppress_drag_until_release:
-		_orbiting = true
-		_last_mouse = mouse_now
-		_drag_start = mouse_now
-		_drag_total = 0.0
-		# Pick the drag mode based on which button started + modifiers.
-		#   MMB / Shift+LMB / Space+LMB -> pan target
-		#   RMB                          -> dolly (push/pull camera distance)
-		#   LMB                          -> orbit
-		if mmb:
-			_drag_mode = "pan"
-			_drag_button = MOUSE_BUTTON_MIDDLE
-		elif rmb:
-			_drag_button = MOUSE_BUTTON_RIGHT
-			# Aquascape mode swaps RMB from dolly to orbit so the user can
-			# still rotate the camera while LMB is busy with the brush. In
-			# normal mode RMB stays as dolly (wheel covers zoom anyway).
-			_drag_mode = "orbit" if _aquascape_mode else "dolly"
-		else:
-			_drag_button = MOUSE_BUTTON_LEFT
-			if pan_modifier:
-				_drag_mode = "pan"
-			elif _aquascape_mode:
-				# Aquascape: LMB NEVER orbits. Either we're dragging an
-				# existing wood log (mouse went down ON a log) or we're
-				# painting voxels with the active tool. Painting fires
-				# immediately on LMB-down + continues on drag, throttled
-				# by _paint_cooldown so we don't stack 60 dirt voxels per
-				# second.
-				var picked: Node3D = _pick_wood_log(mouse_now)
-				if picked != null:
-					_wood_drag = picked
-					_wood_drag_y_offset = picked.global_position.y \
-						- _substrate_top_y()
-					_drag_mode = "wood_drag"
-				else:
-					_drag_mode = "paint"
-					_paint_cooldown = 0.0
-					_aquascape_place(mouse_now)
-			else:
-				_drag_mode = "orbit"
-	elif not any_btn and _orbiting:
-		_orbiting = false
-		_wood_drag = null
-		# Click vs drag: only a pure LMB tap (no Shift/Space held, no
-		# significant drag distance) dispatches as a click. MMB/RMB release
-		# never places aquascape voxels or starts a follow. A Shift-LMB or
-		# Space-LMB tap is treated as the user reaching for pan and then
-		# changing their mind - no action.
-		# Aquascape places happen DURING the drag (paint mode), not on
-		# release. So in aquascape mode the only click-like action left is
-		# the follow-fish dispatch (and that's disabled anyway since LMB
-		# in aquascape goes to paint/wood_drag, never to orbit). For
-		# normal mode this dispatches follow-cam on a clean LMB tap.
-		_drag_mode = ""
-		_drag_button = 0
-
-	if _orbiting:
-		# Dynamic modifier re-evaluation: while LMB is held, pressing OR
-		# releasing Shift/Space mid-drag flips orbit <-> pan immediately.
-		# MMB stays pan and RMB stays dolly for their whole gesture - the
-		# starting button's intent wins for non-LMB drags.
-		#
-		# CRITICAL: don't touch paint / wood_drag modes here. Those were
-		# locked in at LMB-down by the aquascape branch above; overwriting
-		# them every frame is what made the original "I can't paint dirt"
-		# bug - the moment the cursor moved, the mode flipped back to
-		# orbit and the camera ate the drag.
-		if _drag_button == MOUSE_BUTTON_LEFT \
-				and _drag_mode != "paint" \
-				and _drag_mode != "wood_drag":
-			_drag_mode = "pan" if pan_modifier else "orbit"
-		var delta: Vector2 = mouse_now - _last_mouse
-		_last_mouse = mouse_now
-		_drag_total += delta.length()
-		if delta.length_squared() > 0.0:
-			match _drag_mode:
-				"pan":
-					_pan_target(delta)
-				"dolly":
-					# Vertical mouse motion = distance change. Drag DOWN pushes
-					# camera away (radius up), drag UP pulls closer.
-					radius = clampf(radius * (1.0 + delta.y * DOLLY_MOUSE_SENSITIVITY),
-						MIN_RADIUS, MAX_RADIUS)
-					_apply_camera()
-				"paint":
-					# Aquascape brush. Drop a voxel at the current cursor
-					# every PAINT_INTERVAL seconds; this lets the user
-					# "paint" dirt by dragging instead of clicking once per
-					# voxel. The cooldown is ticked elsewhere in _process.
-					if _paint_cooldown <= 0.0:
-						_aquascape_place(mouse_now)
-						_paint_cooldown = PAINT_INTERVAL
-				"wood_drag":
-					# Move the held driftwood log to the current cursor
-					# projection on the substrate. Preserve its original
-					# Y offset so logs that were sitting up on a stone pile
-					# don't snap down into the floor.
-					if _wood_drag != null and is_instance_valid(_wood_drag):
-						var hit: Vector3 = _project_to_substrate(mouse_now)
-						if hit != INVALID_HIT:
-							_wood_drag.global_position = Vector3(
-								hit.x,
-								_substrate_top_y() + _wood_drag_y_offset,
-								hit.z)
-				_:
-					yaw -= delta.x * SENSITIVITY
-					pitch -= delta.y * SENSITIVITY
-					pitch = clampf(pitch, MIN_PITCH, MAX_PITCH)
-					_apply_camera()
-
+	
+	# ---- Touch: long-press detection (runs every frame while finger is down) ----
+	if _touches.size() == 1 and not _long_press_fired:
+		var elapsed: float = Time.get_ticks_msec() / 1000.0 - _tap_start_time
+		if elapsed >= LONG_PRESS_TIME and _tap_moved < TAP_MAX_MOVE:
+			_long_press_fired = true
+			_auto_orbit = not _auto_orbit
+			print_verbose("[vivarium] long-press: auto-orbit %s" % ("ON" if _auto_orbit else "OFF"))
+	
+	# ---- Mouse input (skipped when touch is active to avoid double-fire) ----
+	if _is_touch_active():
+		# Touch is being handled in _input(); skip mouse polling entirely.
+		# Still run keyboard shortcuts, follow-cam, auto-orbit, etc. below.
+		pass
+	else:
+		_process_mouse_input(dt)
+	
 	# Follow-cam: smoothly track the followed creature. Use the
 	# frame-rate-independent lerp formula `1 - exp(-k*dt)` instead of the
 	# naive `clampf(dt * k, ...)` so the follow feels equally smooth at 30,
@@ -392,64 +322,145 @@ func _process(dt: float) -> void:
 	if _portal_open:
 		_update_portal_pip()
 
-	# WASD pan target along view direction.
-	var fwd: Vector3 = (target - camera.global_position)
-	fwd.y = 0.0
-	if fwd.length_squared() > 0.001:
-		fwd = fwd.normalized()
-		var right: Vector3 = fwd.cross(Vector3.UP).normalized()
-		var step: float = PAN_SPEED * dt
-		var moved: bool = false
-		if Input.is_key_pressed(KEY_W): target += fwd * step; moved = true
-		if Input.is_key_pressed(KEY_S): target -= fwd * step; moved = true
-		if Input.is_key_pressed(KEY_D): target += right * step; moved = true
-		if Input.is_key_pressed(KEY_A): target -= right * step; moved = true
-		if Input.is_key_pressed(KEY_E): target.y += step; moved = true
-		if Input.is_key_pressed(KEY_Q): target.y -= step; moved = true
-		if Input.is_key_pressed(KEY_F):
-			target = DEFAULT_TARGET
-			radius = DEFAULT_RADIUS
-			yaw = DEFAULT_YAW
-			pitch = DEFAULT_PITCH
-			# Drop any active follow / auto-orbit so the reset actually sticks.
-			# Previously F snapped target to DEFAULT for one frame, then the
-			# follow-cam block above immediately lerp'd it back onto whichever
-			# fish the player was following — F appeared to do nothing.
-			_follow_target = null
-			_auto_orbit = false
-			moved = true
-		if moved:
-			_apply_camera()
+	# WASD pan target along view direction (desktop only — no keyboard on mobile).
+	if not _is_touch_active():
+		var fwd: Vector3 = (target - camera.global_position)
+		fwd.y = 0.0
+		if fwd.length_squared() > 0.001:
+			fwd = fwd.normalized()
+			var right: Vector3 = fwd.cross(Vector3.UP).normalized()
+			var step: float = PAN_SPEED * dt
+			var moved: bool = false
+			if Input.is_key_pressed(KEY_W): target += fwd * step; moved = true
+			if Input.is_key_pressed(KEY_S): target -= fwd * step; moved = true
+			if Input.is_key_pressed(KEY_D): target += right * step; moved = true
+			if Input.is_key_pressed(KEY_A): target -= right * step; moved = true
+			if Input.is_key_pressed(KEY_E): target.y += step; moved = true
+			if Input.is_key_pressed(KEY_Q): target.y -= step; moved = true
+			if Input.is_key_pressed(KEY_F):
+				target = DEFAULT_TARGET
+				radius = DEFAULT_RADIUS
+				yaw = DEFAULT_YAW
+				pitch = DEFAULT_PITCH
+				_follow_target = null
+				_auto_orbit = false
+				moved = true
+			if moved:
+				_apply_camera()
+
+# Extracted mouse-polling logic. Called from _process() only when touch
+# is NOT active (prevents emulated mouse events from fighting touch).
+func _process_mouse_input(dt: float) -> void:
+	var mouse_now: Vector2 = get_window().get_mouse_position()
+	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var mmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)
+	var rmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	var pan_modifier: bool = Input.is_key_pressed(KEY_SHIFT) \
+		or Input.is_key_pressed(KEY_SPACE)
+	var any_btn: bool = lmb or mmb or rmb
+	if not any_btn:
+		_suppress_drag_until_release = false
+
+	if any_btn and not _orbiting and not _suppress_drag_until_release:
+		_orbiting = true
+		_last_mouse = mouse_now
+		_drag_start = mouse_now
+		_drag_total = 0.0
+		if mmb:
+			_drag_mode = "pan"
+			_drag_button = MOUSE_BUTTON_MIDDLE
+		elif rmb:
+			_drag_button = MOUSE_BUTTON_RIGHT
+			_drag_mode = "orbit" if _aquascape_mode else "dolly"
+		else:
+			_drag_button = MOUSE_BUTTON_LEFT
+			if pan_modifier:
+				_drag_mode = "pan"
+			elif _aquascape_mode:
+				var picked: Node3D = _pick_wood_log(mouse_now)
+				if picked != null:
+					_wood_drag = picked
+					_wood_drag_y_offset = picked.global_position.y \
+						- _substrate_top_y()
+					_drag_mode = "wood_drag"
+				else:
+					_drag_mode = "paint"
+					_paint_cooldown = 0.0
+					_aquascape_place(mouse_now)
+			else:
+				_drag_mode = "orbit"
+	elif not any_btn and _orbiting:
+		_orbiting = false
+		_wood_drag = null
+		_drag_mode = ""
+		_drag_button = 0
+
+	if _orbiting:
+		if _drag_button == MOUSE_BUTTON_LEFT \
+				and _drag_mode != "paint" \
+				and _drag_mode != "wood_drag":
+			_drag_mode = "pan" if pan_modifier else "orbit"
+		var delta: Vector2 = mouse_now - _last_mouse
+		_last_mouse = mouse_now
+		_drag_total += delta.length()
+		if delta.length_squared() > 0.0:
+			match _drag_mode:
+				"pan":
+					_pan_target(delta)
+				"dolly":
+					radius = clampf(radius * (1.0 + delta.y * DOLLY_MOUSE_SENSITIVITY),
+						MIN_RADIUS, MAX_RADIUS)
+					_apply_camera()
+				"paint":
+					if _paint_cooldown <= 0.0:
+						_aquascape_place(mouse_now)
+						_paint_cooldown = PAINT_INTERVAL
+				"wood_drag":
+					if _wood_drag != null and is_instance_valid(_wood_drag):
+						var hit: Vector3 = _project_to_substrate(mouse_now)
+						if hit != INVALID_HIT:
+							_wood_drag.global_position = Vector3(
+								hit.x,
+								_substrate_top_y() + _wood_drag_y_offset,
+								hit.z)
+				_:
+					yaw -= delta.x * SENSITIVITY
+					pitch -= delta.y * SENSITIVITY
+					pitch = clampf(pitch, MIN_PITCH, MAX_PITCH)
+					_apply_camera()
+
 
 	# G toggles auto-orbit. (Space used to do this; it's now reserved as the
 	# hold-to-pan modifier, matching Photoshop / Figma muscle memory.)
-	var g_now: bool = Input.is_key_pressed(KEY_G)
-	if g_now and not _auto_orbit_was_pressed:
-		_auto_orbit = not _auto_orbit
-	_auto_orbit_was_pressed = g_now
+	if not _is_touch_active():
+		var g_now: bool = Input.is_key_pressed(KEY_G)
+		if g_now and not _auto_orbit_was_pressed:
+			_auto_orbit = not _auto_orbit
+		_auto_orbit_was_pressed = g_now
 	if _auto_orbit:
 		yaw += AUTO_ORBIT_SPEED * dt
 		_apply_camera()
 
-	# Edge-triggered shortcuts. In aquascape mode 1/2/3/4 switch the tool;
-	# otherwise they're the time-scale 1x/4x/16x keys.
-	_handle_shortcut(KEY_P, _toggle_pause)
-	_handle_shortcut(KEY_1, func(): _on_one())
-	_handle_shortcut(KEY_2, func(): _on_two())
-	_handle_shortcut(KEY_3, func(): _on_three())
-	_handle_shortcut(KEY_4, func(): _on_four())
-	_handle_shortcut(KEY_F12, _take_photo)
-	_handle_shortcut(KEY_ESCAPE, _clear_follow)
-	_handle_shortcut(KEY_C, _toggle_portal)
-	_handle_shortcut(KEY_T, _toggle_timelapse)
-	_handle_shortcut(KEY_B, _toggle_aquascape)
-	_handle_shortcut(KEY_BACKSPACE, _aquascape_undo)
-	_handle_shortcut(KEY_DELETE, _aquascape_undo)
+	# Edge-triggered shortcuts (keyboard only — mobile gets on-screen buttons).
+	if not _is_touch_active():
+		_handle_shortcut(KEY_P, _toggle_pause)
+		_handle_shortcut(KEY_1, func(): _on_one())
+		_handle_shortcut(KEY_2, func(): _on_two())
+		_handle_shortcut(KEY_3, func(): _on_three())
+		_handle_shortcut(KEY_4, func(): _on_four())
+		_handle_shortcut(KEY_F12, _take_photo)
+		_handle_shortcut(KEY_ESCAPE, _clear_follow)
+		_handle_shortcut(KEY_C, _toggle_portal)
+		_handle_shortcut(KEY_T, _toggle_timelapse)
+		_handle_shortcut(KEY_B, _toggle_aquascape)
+		_handle_shortcut(KEY_BACKSPACE, _aquascape_undo)
+		_handle_shortcut(KEY_DELETE, _aquascape_undo)
 
 	# Aquascape preview voxel: shown at the substrate projection of the
-	# current mouse position, ONLY when in aquascape mode.
+	# current mouse/touch position, ONLY when in aquascape mode.
+	var cursor_pos: Vector2 = _touches.values()[0] if _touches.size() > 0 else get_window().get_mouse_position()
 	if _aquascape_mode:
-		_update_aquascape_preview(mouse_now)
+		_update_aquascape_preview(cursor_pos)
 
 	# Timelapse: dump a frame every TIMELAPSE_INTERVAL real seconds.
 	if _timelapse_active:
@@ -763,6 +774,9 @@ func _toggle_aquascape() -> void:
 		if aquascape_palette != null:
 			aquascape_palette.visible = false
 		print_verbose("[vivarium] aquascape OFF (resumed at %gx)" % _aquascape_saved_time_scale)
+	# Notify mobile HUD to show/hide the undo button.
+	if _mobile_hud != null and _mobile_hud.has_method("set_aquascape_mode"):
+		_mobile_hud.set_aquascape_mode(_aquascape_mode)
 
 
 # Build the floating tool palette shown at top-center while in aquascape
@@ -1114,6 +1128,17 @@ func _aquascape_undo() -> void:
 
 # Scroll wheel + creature clicks come through as events (not reliable via polling).
 func _input(event: InputEvent) -> void:
+	# ---- Touch events ----
+	if event is InputEventScreenTouch:
+		_handle_screen_touch(event as InputEventScreenTouch)
+		return
+	if event is InputEventScreenDrag:
+		_handle_screen_drag(event as InputEventScreenDrag)
+		return
+	
+	# ---- Mouse events (skip when touch is active) ----
+	if _is_touch_active():
+		return
 	if event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event
 		if mb.pressed:
@@ -1129,6 +1154,190 @@ func _input(event: InputEvent) -> void:
 				# also yanked the camera as the user moved the cursor.
 				if _click_targets_creature():
 					_suppress_drag_until_release = true
+
+
+# ---- Touch gesture handlers ----
+
+func _handle_screen_touch(ev: InputEventScreenTouch) -> void:
+	if ev.pressed:
+		# Finger down.
+		_touches[ev.index] = ev.position
+		_touch_prev[ev.index] = ev.position
+		_touch_active = true
+		
+		if _touches.size() == 1:
+			# First finger: start tap / long-press timers.
+			_tap_start_time = Time.get_ticks_msec() / 1000.0
+			_tap_start_pos = ev.position
+			_tap_moved = 0.0
+			_long_press_fired = false
+			
+			# Aquascape: start painting immediately on touch-down (like LMB).
+			if _aquascape_mode:
+				var picked: Node3D = _pick_wood_log(ev.position)
+				if picked != null:
+					_wood_drag = picked
+					_wood_drag_y_offset = picked.global_position.y \
+						- _substrate_top_y()
+					_drag_mode = "wood_drag"
+				else:
+					_drag_mode = "paint"
+					_paint_cooldown = 0.0
+					_aquascape_place(ev.position)
+		elif _touches.size() == 2:
+			# Second finger: record pinch baseline distance.
+			var positions: Array = _touches.values()
+			_pinch_distance = (positions[0] as Vector2).distance_to(positions[1] as Vector2)
+			# Cancel any pending tap / long-press — this is a multi-touch gesture.
+			_long_press_fired = true
+			# Cancel aquascape paint if we were in it — 2-finger means navigate.
+			if _drag_mode == "paint":
+				_drag_mode = ""
+			_wood_drag = null
+	else:
+		# Finger up.
+		if ev.index == 0 and _touches.size() == 1:
+			# Last finger lifted: check for tap / double-tap.
+			var elapsed: float = Time.get_ticks_msec() / 1000.0 - _tap_start_time
+			var is_tap: bool = elapsed < TAP_MAX_TIME and _tap_moved < TAP_MAX_MOVE \
+				and not _long_press_fired
+			
+			if is_tap:
+				var now: float = Time.get_ticks_msec() / 1000.0
+				# Double-tap check.
+				if _last_tap_time > 0.0 \
+						and (now - _last_tap_time) < DOUBLE_TAP_WINDOW \
+						and ev.position.distance_to(_last_tap_pos) < DOUBLE_TAP_RADIUS:
+					# Double-tap → reset camera.
+					target = DEFAULT_TARGET
+					radius = DEFAULT_RADIUS
+					yaw = DEFAULT_YAW
+					pitch = DEFAULT_PITCH
+					_follow_target = null
+					_auto_orbit = false
+					_apply_camera()
+					_last_tap_time = -1.0
+					print_verbose("[vivarium] double-tap: reset camera")
+				else:
+					# Single tap → try to pick a creature.
+					_last_tap_time = now
+					_last_tap_pos = ev.position
+					_touch_pick_creature(ev.position)
+			
+			# End aquascape drag.
+			_wood_drag = null
+			_drag_mode = ""
+		
+		_touches.erase(ev.index)
+		_touch_prev.erase(ev.index)
+		if _touches.is_empty():
+			_touch_active = false
+			_pinch_distance = 0.0
+
+
+func _handle_screen_drag(ev: InputEventScreenDrag) -> void:
+	_touches[ev.index] = ev.position
+	
+	# Track cumulative movement for tap detection.
+	if ev.index == 0:
+		_tap_moved += ev.relative.length()
+	
+	if _touches.size() == 1:
+		# ---- Single finger: orbit or aquascape paint ----
+		if _aquascape_mode:
+			match _drag_mode:
+				"paint":
+					if _paint_cooldown <= 0.0:
+						_aquascape_place(ev.position)
+						_paint_cooldown = PAINT_INTERVAL
+				"wood_drag":
+					if _wood_drag != null and is_instance_valid(_wood_drag):
+						var hit: Vector3 = _project_to_substrate(ev.position)
+						if hit != INVALID_HIT:
+							_wood_drag.global_position = Vector3(
+								hit.x,
+								_substrate_top_y() + _wood_drag_y_offset,
+								hit.z)
+				_:
+					# Even in aquascape, allow orbit if no tool action locked.
+					yaw -= ev.relative.x * TOUCH_ORBIT_SENSITIVITY
+					pitch -= ev.relative.y * TOUCH_ORBIT_SENSITIVITY
+					pitch = clampf(pitch, MIN_PITCH, MAX_PITCH)
+					_apply_camera()
+		else:
+			# Normal mode: 1-finger drag orbits.
+			yaw -= ev.relative.x * TOUCH_ORBIT_SENSITIVITY
+			pitch -= ev.relative.y * TOUCH_ORBIT_SENSITIVITY
+			pitch = clampf(pitch, MIN_PITCH, MAX_PITCH)
+			_apply_camera()
+		
+		_touch_prev[ev.index] = ev.position
+	
+	elif _touches.size() == 2:
+		# ---- Two fingers: pan + pinch zoom ----
+		_touch_prev[ev.index] = ev.position
+		var positions: Array = _touches.values()
+		var p0: Vector2 = positions[0] as Vector2
+		var p1: Vector2 = positions[1] as Vector2
+		
+		# Pinch zoom: compare current finger distance to previous frame.
+		var cur_dist: float = p0.distance_to(p1)
+		if _pinch_distance > 10.0:  # avoid division issues on initial frame
+			var zoom_delta: float = (cur_dist - _pinch_distance) * PINCH_ZOOM_SENSITIVITY
+			radius = clampf(radius * (1.0 - zoom_delta / 100.0), MIN_RADIUS, MAX_RADIUS)
+			_apply_camera()
+		_pinch_distance = cur_dist
+		
+		# 2-finger pan: average of both deltas.
+		if _touch_prev.size() == 2:
+			var prev_positions: Array = _touch_prev.values()
+			var avg_delta: Vector2 = ev.relative * 0.5  # approximate
+			_pan_target(avg_delta * (TOUCH_PAN_SENSITIVITY / PAN_MOUSE_SENSITIVITY))
+
+
+func _touch_pick_creature(screen_pos: Vector2) -> void:
+	# Convert touch position to SubViewport coordinates and pick.
+	if display == null or sub_viewport == null:
+		return
+	var sv_pos: Vector2 = _window_mouse_to_viewport(screen_pos)
+	var creatures: Array = _gather_creatures()
+	var picked: Node3D = _pick_creature_at_viewport(sv_pos, creatures)
+	if picked != null:
+		_assign_creature_target(picked)
+		print_verbose("[vivarium] touch-tap: picked %s" % _creature_label(picked))
+	else:
+		# Tap on empty area clears follow (replaces ESC on desktop).
+		if _follow_target != null:
+			_follow_target = null
+			print_verbose("[vivarium] touch-tap: cleared follow")
+
+
+# ---- Mobile UI setup ----
+
+func _setup_mobile_ui() -> void:
+	# Enlarge all header toggle buttons so they're finger-friendly (≥48×48dp).
+	var toggle_buttons: Array[Button] = []
+	if settings_toggle != null: toggle_buttons.append(settings_toggle)
+	if render_toggle != null: toggle_buttons.append(render_toggle)
+	if fish_store_toggle != null: toggle_buttons.append(fish_store_toggle)
+	if aquascape_toggle != null: toggle_buttons.append(aquascape_toggle)
+	if portal_toggle != null: toggle_buttons.append(portal_toggle)
+	for btn in toggle_buttons:
+		btn.custom_minimum_size = Vector2(64, 48)
+		btn.add_theme_font_size_override("font_size", 16)
+	
+	# Update the controls hint to show touch gestures instead of keyboard.
+	var hint: Label = get_node_or_null("ControlsHint")
+	if hint != null:
+		hint.text = "drag orbit · pinch zoom · 2-finger pan · tap creature · double-tap reset · long-press auto-orbit"
+	
+	# Wire up the MobileHUD node if it exists in the scene tree.
+	_mobile_hud = get_node_or_null("MobileHUD")
+	if _mobile_hud != null and _mobile_hud.has_signal("pause_pressed"):
+		_mobile_hud.connect("pause_pressed", _toggle_pause)
+		_mobile_hud.connect("speed_pressed", _set_time_scale)
+		_mobile_hud.connect("photo_pressed", _take_photo)
+		_mobile_hud.connect("undo_pressed", _aquascape_undo)
 
 
 func _apply_camera() -> void:
