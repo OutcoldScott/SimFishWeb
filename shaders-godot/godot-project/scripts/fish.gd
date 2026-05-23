@@ -382,27 +382,6 @@ func init_genome(genome: Dictionary) -> void:
 	clutch_size = genome.get("clutch_size", clutch_size)
 	preferred_y = genome.get("preferred_y", preferred_y)
 	sex = genome.get("sex", randi() % 2)
-	# Sexual dimorphism for species that have it. Guppies are the obvious
-	# case: males are tiny, brightly colored, and grow long flowing tails;
-	# females are larger, dull silver, and have small tails. The genome
-	# carries a base template; if dimorphism is enabled, we override the
-	# visible traits for this individual based on sex BEFORE building the
-	# body. Drift-through-generations still works because the underlying
-	# stored values are shared.
-	if bool(genome.get("dimorphic", false)) and sex == 1:
-		# Female form: drop saturation, enlarge body, shrink fins.
-		base_color = Color(base_color.r, base_color.g, base_color.b) \
-			.lerp(Color(0.78, 0.78, 0.80), 0.55)   # silvery wash
-		if _tail_color_set:
-			tail_color = tail_color.lerp(Color(0.7, 0.72, 0.75), 0.6)
-		accent_color = accent_color.lerp(Color(0.65, 0.65, 0.70), 0.45)
-		# Bigger, dumpier body.
-		adult_voxel_scale *= 1.35
-		body_depth_factor *= 1.15
-		ventral_profile = clampf(ventral_profile * 1.25, 0.55, 1.9)
-		# Smaller, drabber fins.
-		fin_length_factor = clampf(fin_length_factor * 0.55, 0.5, 1.8)
-		dorsal_height_factor = clampf(dorsal_height_factor * 0.7, 0.5, 1.8)
 	generation = genome.get("generation", 0)
 	fin_length_factor = genome.get("fin_length_factor", fin_length_factor)
 	body_elongation = genome.get("body_elongation", body_elongation)
@@ -426,6 +405,28 @@ func init_genome(genome: Dictionary) -> void:
 	adipose_fin = bool(genome.get("adipose_fin", adipose_fin))
 	snout_pointed = bool(genome.get("snout_pointed", snout_pointed))
 	body_shape = String(genome.get("body_shape", body_shape))
+	# Sexual dimorphism. Must run AFTER all genome.get reads above — earlier
+	# the block sat before the genome reads, so any female overrides to
+	# fin_length_factor / body_depth_factor / dorsal_height_factor /
+	# ventral_profile got immediately stomped by the subsequent
+	# `genome.get(...)` calls and every female rendered as a male. The block
+	# now correctly applies on top of the final genome-resolved values.
+	# Drift-through-generations still works because the underlying stored
+	# values are shared at the genome level.
+	if bool(genome.get("dimorphic", false)) and sex == 1:
+		# Female form: drop saturation, enlarge body, shrink fins.
+		base_color = Color(base_color.r, base_color.g, base_color.b) \
+			.lerp(Color(0.78, 0.78, 0.80), 0.55)   # silvery wash
+		if _tail_color_set:
+			tail_color = tail_color.lerp(Color(0.7, 0.72, 0.75), 0.6)
+		accent_color = accent_color.lerp(Color(0.65, 0.65, 0.70), 0.45)
+		# Bigger, dumpier body.
+		adult_voxel_scale *= 1.35
+		body_depth_factor *= 1.15
+		ventral_profile = clampf(ventral_profile * 1.25, 0.55, 1.9)
+		# Smaller, drabber fins.
+		fin_length_factor = clampf(fin_length_factor * 0.55, 0.5, 1.8)
+		dorsal_height_factor = clampf(dorsal_height_factor * 0.7, 0.5, 1.8)
 	# Locomotion derives from body_shape unless explicitly overridden in
 	# the genome. The match expresses the real-world correlation between
 	# a fish's silhouette and how it produces thrust.
@@ -1216,6 +1217,13 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 						maturity = MATURITY_ADULT
 					if _food_glow != null:
 						_food_glow.light_energy = FOOD_GLOW_ENERGY
+				# Eating consumes the rest of this tick: apply accumulated
+				# steering (wall_avoid + schooling) and return. Without this
+				# return, the fish falls through into predation/breeding
+				# tiers and can record multiple conflicting events that
+				# overwrite each other in the same dict.
+				target_velocity = desired.limit_length(effective_max)
+				return events
 			else:
 				var pull: float = 0.9
 				if best_w.kind == 3: # FOOD
@@ -1284,6 +1292,11 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 				age = maxf(0.0, age - max_age_s * MEAL_AGE_REDUCTION_FRAC)
 				events["waste_at"] = position + Vector3(0, -0.1, 0)
 				events["waste_amount"] = 0.20
+				# A successful kill ends the tick. Falling through would
+				# overwrite events["kill_prey"] / events["waste_at"] with a
+				# later tier's target and drop the actual predation.
+				target_velocity = desired.limit_length(effective_max)
+				return events
 			else:
 				if burst_remaining <= 0.0 and energy > 0.3:
 					burst_remaining = 0.5
@@ -1317,6 +1330,10 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 				age = maxf(0.0, age - max_age_s * MEAL_AGE_REDUCTION_FRAC)
 				events["waste_at"] = position + Vector3(0, -0.1, 0)
 				events["waste_amount"] = 0.15
+				# Successful baby-shrimp kill: end the tick so events don't
+				# get stomped by Tier 1.9 / 2 below.
+				target_velocity = desired.limit_length(effective_max)
+				return events
 			else:
 				if burst_remaining <= 0.0 and energy > 0.3:
 					burst_remaining = 0.4
@@ -1347,6 +1364,10 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 					events["kill_snail"] = best_snail
 					hunger = maxf(0.0, hunger - 0.35)
 					age = maxf(0.0, age - max_age_s * MEAL_AGE_REDUCTION_FRAC)
+					# Snail-snap done: return so the algae loop below doesn't
+					# overwrite events["kill_snail"] with an eat_algae target.
+					target_velocity = desired.limit_length(effective_max)
+					return events
 				else:
 					if burst_remaining <= 0.0 and energy > 0.3:
 						burst_remaining = 0.35
@@ -1369,6 +1390,11 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 					events["eat_algae"] = best_alga
 					hunger = maxf(0.0, hunger - 0.2)
 					age = maxf(0.0, age - max_age_s * MEAL_AGE_REDUCTION_FRAC)
+					# Algae crop done: return so Tier 2 herbivore plant-nibbling
+					# below doesn't add an events["waste_at"] entry for this
+					# same tick and double-count nutrients.
+					target_velocity = desired.limit_length(effective_max)
+					return events
 				else:
 					var to_alga: Vector3 = best_alga.global_position - position
 					desired += to_alga.normalized() * effective_max * 0.9
@@ -1530,8 +1556,13 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 	# DART TRIGGER. swim_pattern "dart" fish (killifish, shrimp-hunters) burst
 	# unpredictably, breaking the tank's overall motion rhythm. dart_chance
 	# is heritable so lineages can drift toward calmer or twitchier.
+	#
+	# `dart_chance` is a per-second probability; multiply by `dt` to get the
+	# per-tick probability (SIM_DT=0.1 → 0.1× scaling). The previous code had
+	# an extra `* 10.0` that canceled the dt scaling, so every fish darted at
+	# 10× the heritable rate — schools twitched constantly.
 	if dart_chance > 0.0 and burst_remaining <= 0.0 \
-			and randf() < dart_chance * dt * 10.0 and energy > 0.25:
+			and randf() < dart_chance * dt and energy > 0.25:
 		burst_remaining = randf_range(0.25, 0.45)
 		# Snap heading_offset to a new random direction so the dart goes
 		# somewhere new (not just "faster in current direction").
@@ -1544,10 +1575,18 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 
 	# HOVER / INVESTIGATE TRIGGER. Any fish might occasionally stop mid-water to
 	# look around. This breaks up the constant swimming and adds lifelike personality.
+	#
+	# Previously this zeroed `desired` AND `target_velocity` then returned —
+	# which threw away the Tier-0 wall_avoid contribution. With dt=0.1 and a
+	# ~12% per-second trigger rate, a fish near the glass had ~12% chance per
+	# second to LOCK itself against the wall (no avoidance force, no motion).
+	# The fix preserves the wall-avoid (and schooling/home_pull) contributions
+	# already in `desired`, just heavily damped — fish drifts slowly while
+	# "investigating" instead of freezing.
 	if burst_remaining <= 0.0 and _startle_remaining <= 0.0 and randf() < dt * 0.12 and energy > 0.3:
-		# Temporarily stop swimming
-		desired = Vector3.ZERO
-		target_velocity = Vector3.ZERO
+		# 15% of max speed → enough motion to slide off a wall, slow enough to
+		# read as "pausing to look around."
+		target_velocity = desired.limit_length(effective_max * 0.15)
 		return events
 		
 	# PLAYFUL DART (ZOOMIES). Even non-dart species occasionally get a burst of

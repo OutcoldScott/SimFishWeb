@@ -151,15 +151,30 @@ func tick(dt: float) -> void:
 func _try_propagate() -> void:
 	# Attempt to spawn a new small moss cluster nearby. The world's
 	# hardscape_root (driftwood, stones) is the preferred target surface.
+	#
+	# Reject candidate positions outside the tank — the previous code added
+	# a ±1.2-unit XYZ offset with no bounds check, so daughter moss readily
+	# spawned through the glass. We try a few random offsets, then give up;
+	# the parent flips `_has_propagated` either way so we don't retry every
+	# frame.
 	var parent_node: Node = get_parent()
 	if parent_node == null:
 		return
-	var offset := Vector3(
-		randf_range(-1.2, 1.2),
-		randf_range(-0.3, 0.5),
-		randf_range(-1.2, 1.2),
-	)
-	var new_pos: Vector3 = global_position + offset
+	var new_pos: Vector3 = Vector3.ZERO
+	var found: bool = false
+	for _attempt in 6:
+		var offset := Vector3(
+			randf_range(-1.2, 1.2),
+			randf_range(-0.3, 0.5),
+			randf_range(-1.2, 1.2),
+		)
+		var candidate: Vector3 = global_position + offset
+		if _is_inside_tank_xz(candidate.x, candidate.z, 0.4):
+			new_pos = candidate
+			found = true
+			break
+	if not found:
+		return
 	var new_moss := FractalMoss.new()
 	parent_node.add_child(new_moss)
 	new_moss.depth = maxi(2, depth - 1)  # daughter is slightly smaller
@@ -173,6 +188,18 @@ func _try_propagate() -> void:
 		for i in mutated.size():
 			mutated[i] = (mutated[i] as Color).lerp(jitter, 0.06)
 	new_moss.init_at(new_pos, mutated)
+
+
+# Walk up the scene tree to find the world node (which carries
+# `_is_inside_tank` and knows about hex/triangle shapes). Falls back to
+# allowing the spawn if no world is reachable.
+func _is_inside_tank_xz(x: float, z: float, margin: float) -> bool:
+	var n: Node = get_parent()
+	while n != null:
+		if n.has_method("_is_inside_tank"):
+			return n._is_inside_tank(x, z, margin)
+		n = n.get_parent()
+	return true
 
 
 # Shrimp grazing: remove outermost voxels.

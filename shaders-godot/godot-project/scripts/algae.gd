@@ -27,8 +27,13 @@ func init(color: Color = Color8(120, 165, 60)) -> void:
 
 # Called by SimDriver each tick. Returns true if the algae should die off.
 func tick(dt: float, conditions_favor: bool) -> bool:
-	_age += dt
-	if not conditions_favor:
+	# Aging rate: 1× when conditions favor growth, 1.5× when they don't.
+	# The previous code did `_age += dt` then `_age += dt * 1.5`, summing to
+	# 2.5× under unfavorable conditions — algae died 67% faster than the
+	# comment promised.
+	if conditions_favor:
+		_age += dt
+	else:
 		_age += dt * 1.5
 	_phase += dt
 	# Gentle drift on a sine curve so the cluster has visible life. Real

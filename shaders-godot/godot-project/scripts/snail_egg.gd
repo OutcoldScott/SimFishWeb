@@ -16,6 +16,11 @@ extends Node3D
 const HATCH_TIME: float = 60.0
 
 var _age: float = 0.0
+# Latch so _hatch() only ever runs once. _process keeps firing between when we
+# call queue_free() and when the node actually leaves the tree (deferred to end
+# of frame). Without this guard each sac spawned 2-3 baby snails before
+# disappearing — the populations exploded.
+var _hatched: bool = false
 
 
 func _ready() -> void:
@@ -40,12 +45,43 @@ func _build_visual() -> void:
 
 
 func _process(dt: float) -> void:
+	if _hatched:
+		return
+	# Honor sim.time_scale so pause/fast-forward affect egg incubation the
+	# same way they affect snail / shrimp / fish lifecycles. Without this,
+	# eggs continued ticking while everything else paused.
+	var sim := _get_sim()
+	if sim != null:
+		dt *= float(sim.time_scale)
+		if dt <= 0.0:
+			return
 	_age += dt
 	if _age >= HATCH_TIME:
 		_hatch()
 
 
+# Walk up the scene tree to find a SimDriver. Cached on first hit.
+var _sim_driver_ref: Node = null
+
+func _get_sim() -> Node:
+	if _sim_driver_ref != null and is_instance_valid(_sim_driver_ref):
+		return _sim_driver_ref
+	var n: Node = get_parent()
+	while n != null:
+		var d := n.get_node_or_null("SimDriver")
+		if d != null:
+			_sim_driver_ref = d
+			return d
+		n = n.get_parent()
+	return null
+
+
 func _hatch() -> void:
+	# Latch immediately so re-entry from a subsequent _process tick (between
+	# queue_free and actual node removal) is a no-op.
+	if _hatched:
+		return
+	_hatched = true
 	# Spawn a baby snail on the same wall with the inherited shell genome.
 	var parent := get_parent()
 	if parent == null:

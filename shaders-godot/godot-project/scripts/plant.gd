@@ -476,9 +476,18 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 		growth_progress += eff_rate * dt
 		if growth_progress >= 1.0:
 			growth_progress = 0.0
+			# Tentatively raise the cap, then attempt to grow into the new
+			# space. If `_grow_one()` fails (plant is dying / melting / has
+			# some other hard veto), REVERT the cap raise. Without this
+			# revert, `max_height` ratcheted up on every failed grow attempt,
+			# which over a long-running tank let dying plants record
+			# preposterously large maximum heights that affected leaf
+			# placement math later on.
 			max_height += 1
 			if _grow_one():
 				substrate.consume_at(_world_pos, nutrient_demand)
+			else:
+				max_height -= 1
 		else:
 			# Maintenance
 			substrate.consume_at(_world_pos, nutrient_demand * 0.1 * dt)
@@ -813,14 +822,27 @@ func _spawn_decay_waste(at: Vector3) -> void:
 # ---- Leaf flutter ----
 
 func _flutter_leaves(dt: float) -> void:
+	# IMPORTANT: this sets the *absolute* per-frame rotation from a sinusoid,
+	# it doesn't add a delta. The previous `+=` version was an unintended
+	# integrator — `dt * 60` framerate-normalised the increment so the math
+	# looks like an "amount per frame at 60fps," but the underlying value
+	# accumulated forever. Over an hour-long session leaves drifted to
+	# pretzel angles. Using `=` snaps them back to a bounded oscillation
+	# around their build-time orientation each frame.
+	# (`dt` is still here as a no-op tag in case we ever switch to a true
+	# damped-spring model, where dt would matter again.)
+	var _ignored_dt: float = dt
 	for i in _leaf_nodes.size():
 		if not is_instance_valid(_leaf_nodes[i]):
 			continue
 		var leaf: Node3D = _leaf_nodes[i]
 		var ph: float = _phase + float(i) * 1.7
-		# Very subtle micro-rotation.
-		leaf.rotation.z += sin(_t * 2.5 + ph) * 0.003 * dt * 60.0
-		leaf.rotation.x += cos(_t * 2.2 + ph * 1.3) * 0.002 * dt * 60.0
+		# Very subtle micro-rotation. Amplitudes (~4-5°) match the steady-state
+		# excursion the previous accumulator settled at after a few seconds of
+		# integration — chosen so existing tanks visually look the same on
+		# average, just without the unbounded drift.
+		leaf.rotation.z = sin(_t * 2.5 + ph) * 0.072
+		leaf.rotation.x = cos(_t * 2.2 + ph * 1.3) * 0.048
 
 
 # ---- Flow response ----

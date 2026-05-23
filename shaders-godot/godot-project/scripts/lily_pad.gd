@@ -242,20 +242,46 @@ func _clear_flower() -> void:
 func _try_propagate() -> void:
 	# Spawn a new pad nearby via a runner (just spawn directly; visual
 	# runner could be added later).
+	#
+	# Lily pads previously propagated with a ±2.0-unit XZ offset and no
+	# bounds check — runners spawned through the glass on any tank smaller
+	# than the default 8x4 box. Try a handful of offsets, take the first
+	# inside the tank, give up gracefully if none fit.
 	var parent_node: Node = get_parent()
 	if parent_node == null:
 		return
-	var offset := Vector3(
-		randf_range(-2.0, 2.0),
-		0.0,
-		randf_range(-2.0, 2.0),
-	)
-	var new_pos: Vector3 = global_position + offset
+	var new_pos: Vector3 = global_position
+	var found: bool = false
+	for _attempt in 6:
+		var offset := Vector3(
+			randf_range(-2.0, 2.0),
+			0.0,
+			randf_range(-2.0, 2.0),
+		)
+		var candidate: Vector3 = global_position + offset
+		if _is_inside_tank_xz(candidate.x, candidate.z, 0.6):
+			new_pos = candidate
+			found = true
+			break
+	if not found:
+		return
 	var new_pad := LilyPad.new()
 	parent_node.add_child(new_pad)
 	new_pad.pad_radius = pad_radius * randf_range(0.75, 1.0)
 	new_pad.pad_voxels = maxi(12, int(pad_voxels * randf_range(0.6, 0.9)))
 	new_pad.init_at(new_pos, stem_y)
+
+
+# Walk up the scene tree to find the world node (which carries
+# `_is_inside_tank` and knows about hex/triangle shapes). Falls back to
+# allowing the spawn if no world is reachable.
+func _is_inside_tank_xz(x: float, z: float, margin: float) -> bool:
+	var n: Node = get_parent()
+	while n != null:
+		if n.has_method("_is_inside_tank"):
+			return n._is_inside_tank(x, z, margin)
+		n = n.get_parent()
+	return true
 
 
 func _make_mat(c: Color) -> Material:

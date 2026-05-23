@@ -809,13 +809,25 @@ func _respawn_extinct_fauna() -> void:
 		stocking = {"glassdart": 10, "mudsifter": 10, "shrimp": 10}
 
 	var phenotype_mult: float = _initial_phenotype_spread()
-	
-	# Clear out old snails if they existed but died (just in case)
-	if sim.snails_root != null:
-		for c in sim.snails_root.get_children():
-			c.queue_free()
-	
-	# Spawn Fish
+
+	# Tear down the old Snails container entirely rather than just freeing
+	# its children — `sim.snails_root` was still pointing at that drained
+	# container, so predator AI (fish.gd's snail_predator scan) and
+	# `_emit_stats` would keep reading the dying container while
+	# `_build_snails()` below added a NEW sibling named "Snails" that they
+	# couldn't see. Free the parent and rebind sim.snails_root to the
+	# freshly-built container at the end.
+	if sim.snails_root != null and is_instance_valid(sim.snails_root):
+		sim.snails_root.queue_free()
+		sim.snails_root = null
+
+	# Spawn Fish via _spawn_fish_at — this is the same path the initial
+	# population uses, and crucially it calls _apply_water_column_scale on
+	# the genome so respawned fish get their preferred_y / home_y_radius
+	# rescaled to this tank's water column. The old manual `Fish.new()`
+	# path skipped that, so on tall tanks every respawned fish pinned to
+	# the bottom (preferred_y was the reference-tank value of ~3.5
+	# regardless of actual substrate height).
 	for species_name in stocking.keys():
 		if species_name == "shrimp" or species_name == "snails":
 			continue
@@ -831,20 +843,14 @@ func _respawn_extinct_fauna() -> void:
 			g["sex"] = i % 2
 			g["max_age_s"] = float(g.get("max_age_s", 240.0)) + randf_range(-30, 30)
 			_apply_initial_phenotype_spread(g, phenotype_mult)
+			# Jitter spawn Y around the genome's preferred_y so respawned
+			# schools don't all sit at exactly the same depth. _spawn_fish_at
+			# will rescale this to the actual water column.
 			var pref_y: float = float(g.get("preferred_y", 3.5))
 			var spawn_y: float = pref_y + randf_range(-0.6, 0.6)
 			var xz: Vector2 = _random_xz_in_band(-TANK_HALF_D * 0.85, TANK_HALF_D * 0.85, 0.6)
-			var sp := Vector3(xz.x, spawn_y, xz.y)
-			var f := Fish.new()
-			fauna_root.add_child(f)
-			f.global_position = sp
-			f.init_genome(g)
-			# Fast-forward growth
-			f.age = randf_range(0.2, 0.6) * f.max_age_s
-			f.maturity = Fish.MATURITY_ADULT
-			f.adult_voxel_scale = g.get("adult_voxel_scale", 0.15)
-			sim.register_fish(f)
-			
+			_spawn_fish_at(g, Vector3(xz.x, spawn_y, xz.y))
+
 	# Spawn Shrimp
 	if stocking.has("shrimp"):
 		var shrimp_count: int = stocking["shrimp"]
@@ -860,9 +866,11 @@ func _respawn_extinct_fauna() -> void:
 			s.age = randf_range(10.0, 40.0)
 			s.maturity = Shrimp.MATURITY_ADULT
 			sim.register_shrimp(s)
-			
-	# Snails (always spawns 6 per _build_snails default, which is close enough to 10 for snails)
+
+	# Snails: rebuild the container fresh, then rebind sim.snails_root to
+	# point at it (the initial setup at line 186 does the same).
 	_build_snails()
+	sim.snails_root = get_node_or_null("Snails")
 
 
 func _spawn_initial_plants() -> void:

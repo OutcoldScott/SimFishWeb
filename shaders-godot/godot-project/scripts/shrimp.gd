@@ -317,6 +317,19 @@ func tick(dt: float, plants: Array, algae_array: Array, waste: Array, _fry_array
 		if not is_instance_valid(partner) or partner.maturity != MATURITY_ADULT:
 			partner = null
 			court_timer = 0.0
+		elif hunger > 0.75 or energy < 0.2:
+			# CRITICAL HUNGER / EXHAUSTION ESCAPE.
+			# Without this, a paired shrimp returned events at the bottom of
+			# this branch on every tick — it couldn't break off to forage no
+			# matter how starving it got. Pairs of starving adults could
+			# starve to death together rather than abandon courtship. Here
+			# we cut both partner-links cleanly and fall through to the
+			# foraging tiers below.
+			if is_instance_valid(partner):
+				partner.partner = null
+				partner.court_timer = 0.0
+			partner = null
+			court_timer = 0.0
 		else:
 			current_mode = Mode.COURT
 			var to_p: Vector3 = partner.position - position
@@ -479,7 +492,15 @@ func tick(dt: float, plants: Array, algae_array: Array, waste: Array, _fry_array
 			if s == self or s.species != species:
 				continue
 			if s.sex == sex or s.maturity != MATURITY_ADULT \
-					or s.breed_cooldown > 0.0 or s.partner != null:
+					or s.breed_cooldown > 0.0:
+				continue
+			# `s.partner != null` was the only check before — a freed-but-
+			# not-yet-cleaned-up partner reference is non-null in Godot,
+			# so `s` looked permanently paired and was skipped forever
+			# (until its own tick ran the validity-cleanup at line 317).
+			# In a fast-dying colony this silently killed breeding for the
+			# survivors. Validate the partner ref properly here.
+			if s.partner != null and is_instance_valid(s.partner):
 				continue
 			if s.hunger > 0.6 or s.energy < 0.45:
 				continue

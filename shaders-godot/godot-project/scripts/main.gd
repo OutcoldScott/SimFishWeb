@@ -89,6 +89,12 @@ const PAN_MOUSE_SENSITIVITY: float = 0.012  # world units per pixel at radius=1
 const DOLLY_MOUSE_SENSITIVITY: float = 0.012  # log-ish dolly per pixel
 # Follow-cam: when set, camera target tracks this Node3D.
 var _follow_target: Node3D = null
+# Set true when an LMB-down event lands on a creature (picking dispatch in
+# `_input`). The `_process` polling reads `Input.is_mouse_button_pressed` —
+# event handling can't stop polling, so without this flag the same press
+# ALSO starts an orbit drag and every creature click spun the camera.
+# Cleared the next frame LMB releases.
+var _suppress_drag_until_release: bool = false
 
 # Aquascape mode: when active, sim is paused, mouse cursor projects to the
 # substrate, and clicks place voxels according to the current tool. Tools:
@@ -253,8 +259,12 @@ func _process(dt: float) -> void:
 	var pan_modifier: bool = Input.is_key_pressed(KEY_SHIFT) \
 		or Input.is_key_pressed(KEY_SPACE)
 	var any_btn: bool = lmb or mmb or rmb
+	# Clear the pick-suppression flag the moment all buttons are released.
+	# (Set in `_input` when an LMB-down event hit a creature.)
+	if not any_btn:
+		_suppress_drag_until_release = false
 
-	if any_btn and not _orbiting:
+	if any_btn and not _orbiting and not _suppress_drag_until_release:
 		_orbiting = true
 		_last_mouse = mouse_now
 		_drag_start = mouse_now
@@ -365,12 +375,18 @@ func _process(dt: float) -> void:
 					pitch = clampf(pitch, MIN_PITCH, MAX_PITCH)
 					_apply_camera()
 
-	# Follow-cam: smoothly track the followed creature.
+	# Follow-cam: smoothly track the followed creature. Use the
+	# frame-rate-independent lerp formula `1 - exp(-k*dt)` instead of the
+	# naive `clampf(dt * k, ...)` so the follow feels equally smooth at 30,
+	# 60, or 144 FPS. With the old form, at 30 FPS the lerp weight was 0.1
+	# (jumpy), at 144 FPS it was 0.02 (sluggish) — same `k=3` produced
+	# very different behavior on different displays.
 	if _follow_target != null:
 		if not is_instance_valid(_follow_target):
 			_follow_target = null
 		else:
-			target = target.lerp(_follow_target.global_position, clampf(dt * 3.0, 0.0, 1.0))
+			var t: float = 1.0 - exp(-3.0 * dt)
+			target = target.lerp(_follow_target.global_position, t)
 			_apply_camera()
 			
 	if _portal_open:
@@ -395,6 +411,12 @@ func _process(dt: float) -> void:
 			radius = DEFAULT_RADIUS
 			yaw = DEFAULT_YAW
 			pitch = DEFAULT_PITCH
+			# Drop any active follow / auto-orbit so the reset actually sticks.
+			# Previously F snapped target to DEFAULT for one frame, then the
+			# follow-cam block above immediately lerp'd it back onto whichever
+			# fish the player was following — F appeared to do nothing.
+			_follow_target = null
+			_auto_orbit = false
 			moved = true
 		if moved:
 			_apply_camera()
@@ -1102,12 +1124,23 @@ func _input(event: InputEvent) -> void:
 				radius = minf(MAX_RADIUS, radius * ZOOM_FACTOR)
 				_apply_camera()
 			elif mb.button_index == MOUSE_BUTTON_LEFT:
-				_click_targets_creature()
+				# If the click hit a creature, suppress the polled orbit drag
+				# for this LMB gesture — without this, every successful pick
+				# also yanked the camera as the user moved the cursor.
+				if _click_targets_creature():
+					_suppress_drag_until_release = true
 
 
 func _apply_camera() -> void:
 	if camera == null:
 		return
+	# Clamp target to a generous bounding box every time we apply. This is
+	# the single convergence point for pan / WASD / follow-cam — clamping
+	# here means a stray big delta from any of those paths can't push the
+	# target through the camera (breaking `look_at`) or to ±∞.
+	target.x = clampf(target.x, -20.0, 20.0)
+	target.y = clampf(target.y, -2.0, 12.0)
+	target.z = clampf(target.z, -20.0, 20.0)
 	var x := cos(pitch) * sin(yaw)
 	var y := sin(pitch)
 	var z := cos(pitch) * cos(yaw)
@@ -1130,6 +1163,9 @@ func _pan_target(delta: Vector2) -> void:
 	var scale: float = PAN_MOUSE_SENSITIVITY * radius
 	target -= right * (delta.x * scale)
 	target += up * (delta.y * scale)
+	# `target` is clamped to a sane box inside `_apply_camera()` (every
+	# update path calls through there, so the clamp lives at the single
+	# convergence point).
 	# Clear follow-cam when the user manually pans - they're taking control back.
 	_follow_target = null
 	_apply_camera()

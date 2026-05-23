@@ -106,6 +106,12 @@ func _physics_process(dt: float) -> void:
 	# Scale incoming delta by time_scale so pause/fast-forward work uniformly.
 	var sdt: float = dt * time_scale
 	_accum += sdt
+	# Clamp the accumulator to prevent a "spiral of death" on slow frames: at
+	# time_scale=16 a single 100ms hitch enqueues 1.6s = 16 ticks; if any of
+	# those ticks then runs slower than its share of real time, _accum grows
+	# faster than it drains and the game-loop locks. Cap at 4 ticks (0.4s of
+	# sim work) so we drop sim-time on a hitch instead of freezing the render.
+	_accum = minf(_accum, SIM_DT * 4.0)
 	day_phase = fposmod(day_phase + sdt / DAY_LENGTH_S, 1.0)
 	while _accum >= SIM_DT:
 		_accum -= SIM_DT
@@ -175,13 +181,20 @@ func _tick(dt: float) -> void:
 	var baby_snail_list: Array = []
 	if snails_root != null:
 		for c in snails_root.get_children():
+			# queue_free is deferred — children freed on the previous tick can
+			# still appear here. Filter so predator AI doesn't lock onto a ghost.
+			if not is_instance_valid(c):
+				continue
 			if c.get("is_baby") == true:
 				baby_snail_list.append(c)
 
 	for f in fish:
+		if not is_instance_valid(f):
+			continue
 		var neighbors: Array = []
 		for g in fish:
 			if g == f: continue
+			if not is_instance_valid(g): continue
 			if g.position.distance_squared_to(f.position) < 9.0:
 				neighbors.append(g)
 		var ev: Dictionary = f.tick(dt, neighbors, plants, algae, waste, baby_shrimp_list, world_bounds)
@@ -192,9 +205,12 @@ func _tick(dt: float) -> void:
 
 	# 4b. Shrimp.
 	for s in shrimp:
+		if not is_instance_valid(s):
+			continue
 		var sn: Array = []
 		for o in shrimp:
 			if o == s: continue
+			if not is_instance_valid(o): continue
 			if o.position.distance_squared_to(s.position) < 4.0:
 				sn.append(o)
 		var ev: Dictionary = s.tick(dt, plants, algae, waste, fry_list, baby_snail_list,
@@ -249,7 +265,13 @@ func _tick(dt: float) -> void:
 			else:
 				spawn_x = randf_range(world_bounds.position.x + 0.5, world_bounds.end.x - 0.5)
 				spawn_z = randf_range(world_bounds.position.z + 0.5, world_bounds.end.z - 0.5)
-			var fy: float = 6.4 if w == null else float(w.get("WATER_HEIGHT") - 0.1)
+			# WATER_HEIGHT may be unset on the parent in unusual tank presets;
+			# null-subtract would crash. Fall back to a safe near-surface Y.
+			var fy: float = 6.4
+			if w != null:
+				var water_h = w.get("WATER_HEIGHT")
+				if water_h != null:
+					fy = float(water_h) - 0.1
 			_spawn_waste(Vector3(spawn_x, fy, spawn_z), 0.5, 3) # 3 = KIND_FOOD
 
 	# 6c. Algae - bloom if conditions favor (high nutrients + low plant biomass),
@@ -316,6 +338,13 @@ func _tick(dt: float) -> void:
 		a.queue_free()
 
 	# 7. Resolve events from fish + shrimp.
+	#
+	# Targets that get consumed (waste particles, prey, snails, algae) are
+	# tracked in a per-tick `consumed` set so two actors racing the same target
+	# in the same tick don't both try to erase + queue_free it. Before the set
+	# was added, the second consumer would re-call queue_free on an already-
+	# freed node (Godot warns / can crash) and double-credit the food value.
+	var consumed: Dictionary = {}
 	for ev in events:
 		var actor: Node3D = ev.get("actor", null)
 		var actor_kind: String = ev.get("actor_kind", "fish")
@@ -349,7 +378,8 @@ func _tick(dt: float) -> void:
 		# the leftover falls below 0.04 and is lost as background heat.
 		if ev.has("eat_waste"):
 			var w: WasteParticle = ev["eat_waste"]
-			if is_instance_valid(w):
+			if is_instance_valid(w) and not consumed.has(w):
+				consumed[w] = true
 				var leftover: float = w.nutrient_value * 0.4
 				waste.erase(w)
 				w.queue_free()
@@ -363,7 +393,8 @@ func _tick(dt: float) -> void:
 		# Predation - remove the prey.
 		if ev.has("kill_prey"):
 			var prey: Node = ev["kill_prey"]
-			if is_instance_valid(prey):
+			if is_instance_valid(prey) and not consumed.has(prey):
+				consumed[prey] = true
 				if prey is Fish:
 					fish.erase(prey)
 				elif prey is Shrimp:
@@ -378,7 +409,8 @@ func _tick(dt: float) -> void:
 		# at the snail's last position so the loop closes.
 		if ev.has("kill_snail"):
 			var snail: Node = ev["kill_snail"]
-			if is_instance_valid(snail):
+			if is_instance_valid(snail) and not consumed.has(snail):
+				consumed[snail] = true
 				_spawn_waste(snail.global_position, 0.18, WasteParticle.KIND_FISH)
 				snail.queue_free()
 
@@ -387,7 +419,8 @@ func _tick(dt: float) -> void:
 		# waste particle so the consumed nutrients re-enter the substrate.
 		if ev.has("eat_algae"):
 			var alga = ev["eat_algae"]
-			if is_instance_valid(alga):
+			if is_instance_valid(alga) and not consumed.has(alga):
+				consumed[alga] = true
 				algae.erase(alga)
 				_spawn_waste(alga.global_position, 0.08, WasteParticle.KIND_FISH)
 				alga.queue_free()
@@ -395,9 +428,15 @@ func _tick(dt: float) -> void:
 		if ev.get("die", false):
 			# On death, drop a single waste particle worth a bit of nutrient,
 			# then free the fish/shrimp. Closes the biomass -> substrate loop.
-			var k: int = WasteParticle.KIND_FISH if actor_kind == "fish" else WasteParticle.KIND_SHRIMP
-			_spawn_waste(actor.position, 0.4 if actor_kind == "fish" else 0.25, k)
-			actor.queue_free()
+			# Guard with `consumed`: if another actor's kill_prey already freed
+			# this actor earlier in the same batch, skip — the queue_free is
+			# already pending and we'd otherwise drop a phantom waste particle
+			# at a stale position.
+			if not consumed.has(actor):
+				consumed[actor] = true
+				var k: int = WasteParticle.KIND_FISH if actor_kind == "fish" else WasteParticle.KIND_SHRIMP
+				_spawn_waste(actor.position, 0.4 if actor_kind == "fish" else 0.25, k)
+				actor.queue_free()
 
 
 func _spawn_waste(at: Vector3, amount: float, kind: int = 0) -> void:

@@ -43,6 +43,11 @@ var _direction: Vector2 = Vector2.RIGHT     # in wall-tangent space
 var _facing: Vector2 = Vector2.RIGHT        # smoothed direction the body points
 var _t_until_turn: float = 0.0
 var _paused: bool = false
+# Wall-plane anchor. Captured in _ready from the spawn position projected
+# onto wall_normal — i.e. the snail's "depth into the wall." After motion,
+# we re-project position onto this plane so floating-point drift in the
+# wall-normal axis can't accumulate and walk the snail off the glass.
+var _wall_anchor_offset: float = 0.0
 # Cleaner-crew pursuit: true while we're tracking a waste particle. The
 # crawl pulse runs faster while this is set, so the snail visibly
 # accelerates on the food trail.
@@ -86,6 +91,11 @@ func _ready() -> void:
 	_eye_stalks = get_node_or_null("EyeStalks") as Node3D
 	if is_baby:
 		scale = Vector3.ONE * 0.5
+	# Lock the wall plane to the spawn position. World.gd places snails on a
+	# specific wall (back glass, side glass, or substrate floor); we want
+	# motion to stay on that exact plane forever, regardless of what the
+	# wall_min / wall_max box-clamp would otherwise permit.
+	_wall_anchor_offset = wall_normal.dot(position)
 
 
 func _process(dt: float) -> void:
@@ -146,18 +156,27 @@ func _process(dt: float) -> void:
 	# don't snap directions; they pivot slowly.
 	_facing = _facing.lerp(_direction, clampf(dt * 1.2, 0.0, 1.0))
 
-	# Build tangent vectors for this wall.
+	# Build tangent + bitangent vectors for this wall. Both must lie IN the
+	# wall plane (perpendicular to wall_normal); using `up` as the second axis
+	# was broken for floor/ceiling walls (where wall_normal ≈ up), because
+	# then the "vertical" move on the wall actually pushed the snail through
+	# the wall normal — straight out of the glass.
 	var up := Vector3.UP
 	var tangent: Vector3
 	if absf(wall_normal.dot(up)) > 0.95:
 		tangent = Vector3.RIGHT
 	else:
 		tangent = wall_normal.cross(up).normalized()
+	# bitangent completes a right-handed frame inside the wall plane. For
+	# vertical walls this resolves to ±UP (preserving the old "+y = climb up
+	# the glass" semantic); for floor/ceiling walls it resolves to ±FORWARD,
+	# so the snail moves along the plane instead of out of it.
+	var bitangent: Vector3 = tangent.cross(wall_normal).normalized()
 
 	# Detritus seeking: if there's a waste particle near our wall, steer
 	# toward it (within tangent-plane). Snails are the cleanup crew - they
 	# detect detritus from a moderate distance and slow-crawl over to consume.
-	_check_waste_nearby(tangent, up)
+	_check_waste_nearby(tangent, bitangent)
 
 	# Foot-pulse motion. Phase advances at ~1.5 Hz; speed and shell-vertical
 	# squash are modulated by sin(phase), creating a "creep" gait. Snails
@@ -177,7 +196,10 @@ func _process(dt: float) -> void:
 	var pulse_factor: float = 0.5 + 0.5 * sin(_pulse_phase)  # 0..1
 	var speed_mult: float = 1.4 if _pursuing_waste else 1.0
 	var gait_speed: float = SPEED * (0.4 + 1.2 * pulse_factor) * speed_mult
-	var delta: Vector3 = tangent * _facing.x + up * _facing.y
+	# Move along the wall plane: tangent for "horizontal" on the wall,
+	# bitangent for "vertical." Both are perpendicular to wall_normal so
+	# there is no in-axis motion component pushing us out of the glass.
+	var delta: Vector3 = tangent * _facing.x + bitangent * _facing.y
 	position += delta * gait_speed * dt
 
 	# Visual squash: shell expands then compresses through the pulse, like the
@@ -185,13 +207,23 @@ func _process(dt: float) -> void:
 	var squash: float = 1.0 + (pulse_factor - 0.5) * 0.18
 	_apply_squash(squash, up)
 
-	# Clamp to wall rectangle.
+	# Clamp to wall rectangle (per-axis box clamp; this is the gross "stay in
+	# the rect" bound).
 	position.x = clampf(position.x, wall_min.x, wall_max.x)
 	position.y = clampf(position.y, wall_min.y, wall_max.y)
 	position.z = clampf(position.z, wall_min.z, wall_max.z)
+	# Then re-project onto the spawn-time wall plane. The basis fix above
+	# already keeps motion in-plane, but float drift over thousands of ticks
+	# (and the box-clamp above on a corner-adjacent snail) can nudge us
+	# fractionally off. Snapping back here is a defensive, near-zero-cost
+	# safety net — if you spawn a snail on the right glass at x=7.6 it
+	# stays at x=7.6 for the lifetime of the run.
+	var plane_drift: float = wall_normal.dot(position) - _wall_anchor_offset
+	if absf(plane_drift) > 0.0001:
+		position -= wall_normal * plane_drift
 
 
-func _check_waste_nearby(tangent: Vector3, up: Vector3) -> void:
+func _check_waste_nearby(tangent: Vector3, bitangent: Vector3) -> void:
 	# Scan the world for waste particles near our wall. If one is close
 	# enough, point our motion toward it in the wall-tangent plane. When we
 	# get very close, consume it (produces a tiny snail pellet).
@@ -204,33 +236,45 @@ func _check_waste_nearby(tangent: Vector3, up: Vector3) -> void:
 	var sim := _get_sim()
 	if sim == null:
 		return
+	# Reject waste that's deep on the wrong side of our wall plane.
+	# Without this, side-glass snails get lured by floor waste and vice
+	# versa — the snail steers in the wall plane but the target is 5+
+	# units away in the wall_normal axis, so they crawl uselessly toward
+	# the projection. 1.5 units off-plane matches the comment that used
+	# to claim this filter existed.
+	const OFF_PLANE_MAX: float = 1.5
 	var best: Node3D = null
 	var best_d2: float = 5.0 * 5.0
 	for w in sim.waste:
 		if not is_instance_valid(w):
 			continue
-		# Only consider waste roughly on or near our wall (within 1.5 units in
-		# the wall_normal direction). Most waste is on the substrate so the
-		# substrate floor naturally satisfies this for floor-walking snails.
-		var d2: float = (w as Node3D).global_position.distance_squared_to(position)
+		var to_w_pos: Vector3 = (w as Node3D).global_position - global_position
+		if absf(wall_normal.dot(to_w_pos)) > OFF_PLANE_MAX:
+			continue
+		var d2: float = to_w_pos.length_squared()
 		if d2 < best_d2:
 			best_d2 = d2
 			best = w
-			
+
 	# If no waste is found, check for algae. Snails love algae!
 	if best == null and sim.get("algae") != null:
 		best_d2 = 5.0 * 5.0
 		for a in sim.algae:
 			if not is_instance_valid(a):
 				continue
-			var d2: float = (a as Node3D).global_position.distance_squared_to(position)
+			var to_a_pos: Vector3 = (a as Node3D).global_position - global_position
+			if absf(wall_normal.dot(to_a_pos)) > OFF_PLANE_MAX:
+				continue
+			var d2: float = to_a_pos.length_squared()
 			if d2 < best_d2:
 				best_d2 = d2
 				best = a
-				
+
 	if best == null:
 		return
-	var to_w: Vector3 = best.global_position - position
+	# Compare in global space consistently — both endpoints in global, so
+	# the snail's parent transform doesn't skew the comparison.
+	var to_w: Vector3 = best.global_position - global_position
 	# Consume if very close.
 	if to_w.length() < 0.25:
 		if best.get("kind") != null:
@@ -241,7 +285,7 @@ func _check_waste_nearby(tangent: Vector3, up: Vector3) -> void:
 			# It's algae - just nibble it away entirely since snails are slow
 			if best.has_method("nibble"):
 				best.nibble(999)
-				
+
 		# Tiny snail pellet on the substrate at our position.
 		if sim.has_method("_spawn_waste"):
 			sim._spawn_waste(global_position + Vector3(0, -0.05, 0), 0.04,
@@ -249,7 +293,7 @@ func _check_waste_nearby(tangent: Vector3, up: Vector3) -> void:
 		return
 	# Project the to_w vector into wall-tangent space and override direction.
 	var dx: float = to_w.dot(tangent)
-	var dy: float = to_w.dot(up)
+	var dy: float = to_w.dot(bitangent)
 	var dir := Vector2(dx, dy)
 	if dir.length() > 0.01:
 		_direction = dir.normalized()
