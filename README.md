@@ -44,10 +44,33 @@ Tested on Ubuntu / Debian-based distros. The binary already has the exec bit set
 
 ## What's in the tank
 
-- **89 plants** in four zones (background blades, midground rosettes, foreground carpet, moss clumps on driftwood) — each grows voxel-by-voxel over real time, fed by the substrate nutrient field
-- **11 fish** in two species: glassdarts (red mid-water schoolers, mild herbivory) and mudsifters (brown bottom-dwellers, stronger herbivory)
-- **8 shrimp** in two color morphs (cherry-red and amber). They walk on the substrate, climb plants to nibble tips, and snap at the occasional baby fish or snail
-- **6 snails** on the glass walls. They crawl with a visible foot-pulse gait, seek out detritus, breed by laying egg sacs that hatch into babies
+The tank is configured via a **stocking preset**. Pick one from the Settings
+panel; it sets the starting species mix, the phenotype spread, and (for the
+reef preset) the substrate type. The included presets:
+
+| Preset | What it produces |
+|---|---|
+| Community (balanced) | Tetras + guppies + bottom group + 1 betta apex — the default |
+| Tetra school (peaceful) | Pure schoolers + dense shrimp colony, no apex predator |
+| Apex predator + prey | Lots of prey + a betta and a puffer competing for snacks |
+| Diverse founding stock | Every species, wide phenotype spread, evolution diverges fast |
+| Single species (clones) | All glassdarts start identical; drift emerges slowly |
+| Exotic mix (full reef) | All six new species, no glassdart/betta, angelfish centerpiece |
+| Showcase tank | Tall angelfish over a community of guppies + cory + killifish |
+| Reef (saltwater) | Coral reef + mixed tropical school, each fish rolls a unique morph |
+| Custom | Hand-set counts (UI exposes glassdart/mudsifter/shrimp counts) |
+
+Species are defined in `tank_config.gd`'s `SPECIES_LIBRARY` — currently
+glassdart tetra, mudsifter (kuhli-like), betta, killifish, guppy, dwarf
+pufferfish, zebra danio, corydoras, angelfish, and a mixed reef school
+that rolls one of 9 tropical morphs per individual. Adding a new species
+is one entry in the library; presets reference species by key and pick
+them up automatically.
+
+Plus the cast that's not configurable per preset:
+- **Plants** in four zones (background blades, midground rosettes, foreground carpet, moss clumps on driftwood) — voxel-by-voxel growth fed by the substrate nutrient field. Saltwater tanks replace plants with corals.
+- **Shrimp** walking the substrate, climbing plants to nibble tips, snapping at the occasional baby fish or snail. Two color morphs (cherry-red and amber).
+- **Snails** on the glass walls. Foot-pulse crawl, seek detritus, lay egg sacs that hatch into babies. Population-capped so the tank doesn't carpet.
 
 Each creature is an **agent with a genome and a behavior tree**, ticking at 10 Hz with smooth render-rate motion. The food web is fully wired:
 
@@ -55,21 +78,24 @@ Each creature is an **agent with a genome and a behavior tree**, ticking at 10 H
 Plants ← substrate nutrients ← (waste settling + aquasoil reservoir leak + plant decay)
 Shrimp ← detritus, plant tips, rare baby-snail/fry predation
 Snails ← detritus (produce smaller pellets that settle)
-Fish ← detritus, tall plants (≥12 biomass), rare baby-shrimp predation
+Fish ← detritus, tall plants (≥12 biomass), rare baby-shrimp predation, specialist diets (snail-hunter, algae-grazer)
 Substrate nutrients ← waste deposits + reservoir trickle
 ```
 
 ## Watch for
 
 - Plants visibly growing taller every few seconds
-- Fish school: cohesion + alignment + separation with view cones + position prediction. The school anticipates turns instead of reacting to them
-- **Courtship**: an adult pair finds each other, swims alongside for 6 seconds, then lays a clutch of visible eggs on a nearby plant. ~30 sim seconds later, the eggs wobble and hatch into fry
+- Fish schooling with cohesion + alignment + separation, view cones, and position prediction — the school anticipates turns instead of reacting to them
+- **Courtship**: an adult pair finds each other, swims alongside for ~6 seconds (with color pulse + fin flare), then lays a clutch of visible eggs on a nearby plant. The eggs wobble and hatch into fry ~30 sim seconds later
 - Shrimp climbing plants, nibbling the tip, dropping back down
 - Snails leaving small dark pellets behind as they crawl
-- Aging fish visibly fading in color before they die
+- **Day / night activity shift** — diurnal fish slow to a drift at night while bottom-dwellers (cory, mudsifter) pick up the pace, like real nocturnal loaches. Shrimp peak around dawn / dusk
+- **Death sequence** — old or starved fish tilt onto a flank, drift to the substrate, wither, and decompose into a mulm particle that fertilizes the substrate
 - Population dynamics cycling — fry born, some eaten, survivors mature, breed, repeat
 
 ## Controls
+
+### Camera
 
 | Input | Action |
 |---|---|
@@ -80,8 +106,44 @@ Substrate nutrients ← waste deposits + reservoir trickle
 | Q / E | Pan target down / up |
 | F | Reset view |
 | Space | Toggle slow auto-orbit (cinematic) |
+| Click on a creature | Open the PiP portal that follows it |
+| C | Toggle PiP portal |
+| ESC | Clear follow target |
 
-The header at the top shows live ecosystem stats: fish (adults / fry), shrimp, eggs incubating, plants + total biomass, waste particles in transit, substrate nutrient pool.
+### Simulation
+
+| Input | Action |
+|---|---|
+| P | Pause / resume |
+| 1 / 2 / 3 | Time-scale 1× / 4× / 16× |
+| F12 | Photo (saved to user data dir) |
+| T | Start / stop timelapse |
+| B | Aquascape mode (place dirt / stone / driftwood, dig, drag logs) |
+| O | Toggle Settings panel |
+| R | Toggle Render panel |
+
+### Top HUD
+
+The top bar is responsive — desktop / iPad landscape get the full chip strip
+with sublabels (state, fish, shrimp, snails, flora, water, morphs, alerts).
+Medium widths drop the sublabels; phone-narrow widths fold the right-side
+action cluster down to a bottom-right thumb zone. The HUD dims after a few
+seconds of inactivity so it doesn't compete with the scene.
+
+The Settings panel (`O`) lets you change tank dimensions, shape, lighting,
+substrate, aeration fixture, and the stocking preset. Clicking **Apply**
+saves the config and reloads the tank — if the substrate or preset changes
+in a way the saved state can't survive (saltwater → freshwater, or a
+different fish mix), the save is invalidated so the new stocking spawns
+fresh.
+
+### Multiple tanks
+
+The main menu (back from any tank via the **≡ Menu** button) shows your
+saved tanks as cards with thumbnails. Each tank has its own slot under
+`user://tanks/<n>/` containing the per-tank config, save state, and a
+last-rendered screenshot. Duplicate a tank to fork a configuration; delete
+to free a slot.
 
 ## Build it yourself
 
@@ -118,21 +180,43 @@ Workflow: `.github/workflows/release.yml` (Godot 4.6.3, export presets in `expor
 ```
 SimFish/
 ├── shaders-godot/godot-project/    # the actual playable game
-│   ├── main.tscn                   # root scene with SubViewport + palette display
+│   ├── main.tscn                   # root scene with SubViewport + palette display + TopHUD
+│   ├── tank_menu.tscn              # tank-picker shown on launch
 │   ├── scripts/
-│   │   ├── main.gd                 # orbit camera + ecosystem HUD
+│   │   ├── main.gd                 # orbit camera + responsive top HUD + chip renderer
 │   │   ├── world.gd                # builds substrate, hardscape, initial population
-│   │   ├── sim_driver.gd           # fixed-tick coordinator (10 Hz)
+│   │   ├── sim_driver.gd           # fixed-tick coordinator (10 Hz) + save/load
+│   │   ├── tank_config.gd          # autoload: per-tank config + species library + presets
+│   │   ├── tank_saves.gd           # autoload: slot directories + compatibility checks
+│   │   ├── tank_menu.gd            # menu scene: tank cards, new/duplicate/delete
 │   │   ├── substrate_grid.gd       # nutrient field with diffusion + reservoir leak
 │   │   ├── plant.gd                # L-system-ish growing voxel plant
-│   │   ├── fish.gd                 # boids + courtship + lifecycle
-│   │   ├── shrimp.gd               # walk + climb + forage + breed
+│   │   ├── branch_plant.gd         # ... + branchy variants
+│   │   ├── spiral_plant.gd         # ... + spiral, nautilus, fractal moss
+│   │   ├── nautilus_plant.gd
+│   │   ├── fractal_moss.gd
+│   │   ├── cattail_plant.gd        # emergent cattail
+│   │   ├── lily_pad.gd             # floating lily + flower + runners
+│   │   ├── coral.gd                # saltwater plant equivalent
+│   │   ├── fish.gd                 # boids + courtship + lifecycle + death anim
+│   │   ├── shrimp.gd               # walk + climb + forage + breed + death anim
 │   │   ├── snail.gd                # glass-cling crawl with foot-pulse gait
 │   │   ├── waste_particle.gd       # detritus with kind (fish/shrimp/snail)
-│   │   ├── egg.gd                  # incubating egg
-│   │   └── voxel_mat.gd            # ShaderMaterial factory
+│   │   ├── egg.gd / snail_egg.gd   # incubating eggs
+│   │   ├── fish_store.gd           # procedurally-generated buy-new-fish shop
+│   │   ├── settings_panel.gd       # tank/light/substrate/preset/aeration UI
+│   │   ├── render_panel.gd         # resolution/dither/fog/FOV/MSAA UI
+│   │   ├── panel_theme.gd          # shared chrome + typography + form helpers
+│   │   ├── mobile_hud.gd           # bottom-corner controls on touch devices
+│   │   ├── ambient_audio.gd        # day/night ambient layer
+│   │   ├── camera_orbit.gd
+│   │   ├── voxel_mat.gd            # ShaderMaterial factory
+│   │   ├── leaf_shapes.gd          # plant stress-color ramp
+│   │   ├── save_helpers.gd
+│   │   └── capture.gd              # F12 photo + timelapse
 │   ├── shaders/
 │   │   ├── voxel.gdshader          # faceted unshaded voxel material
+│   │   ├── circle_mask.gdshader    # PiP portal mask
 │   │   └── palette_quantize.gdshader # palette LUT + Bayer dither
 │   └── palettes/planted_48.png     # 48-color planted-biotope palette
 ├── shaders-godot/                  # supporting tools
@@ -143,6 +227,10 @@ SimFish/
 │   ├── examples/cycle.rs           #   two-population nitrogen cycle
 │   └── README.md
 ├── data-schemas/                   # JSON Schemas for species data
+├── docs/
+│   ├── GOALS.md                    # 50-item backlog + bonus ideas
+│   ├── index.html / style.css      # github-pages landing
+│   └── img/                        # screenshots
 ├── style-guide/STYLE_GUIDE.md      # palettes, pixel rules, dithering
 └── render_preview.py               # static pixel-art preview generator
 ```
@@ -157,16 +245,31 @@ SimFish/
 
 **Food web.** Waste particles are produced by every eat event and decay. Each "eat waste" event produces a smaller leftover at the eater's position (40% of original value) — energy cascades down through the trophic levels until it falls below 0.04 and is lost. The substrate grid has a slow reservoir leak representing aquasoil bedrock; without it the nutrient pool would bleed out as waste gets snapped up before settling.
 
-**Lifecycles.** All fish + shrimp move through fry → juvenile → adult → senescent → dead. Senescent fish visibly fade their voxel colors. Adult pairs court (fish 6s, shrimp 4s) before spawning. Fish lay visible egg clusters that incubate ~30s before hatching. Shrimp spawn fry directly.
+**Lifecycles.** All fish + shrimp move through fry → juvenile → adult → senescent → dead. Senescent fish visibly fade their voxel colors. Adult pairs court (fish 6s, shrimp 4s) before spawning. Fish lay visible egg clusters that incubate ~30s before hatching. Shrimp spawn fry directly. Natural deaths (old age, starvation) play a 3.5s sink + tilt + wither animation before queue_free; predator kills are still instant so eaten-vs-died-of-old-age reads distinctly.
+
+**HUD.** The top bar is a single `TopHUD` Control with three child panels: left cluster (Menu / Render toggle), center StatsBar (BBCode-tinted chip strip), right cluster (Portal / Aquascape / Buy / Settings toggles). A responsive layout function (`_apply_hud_layout`) detects viewport width + touch and switches between wide / medium / compact presentations — compact moves the right cluster to the bottom-right thumb zone. The HUD auto-dims to ~45% modulate after 6 seconds of no input.
+
+**Panels.** `panel_theme.gd` is a static helper class that provides shared chrome, typography, form rows, and primary/secondary buttons for the Settings, Render, and Fish Store panels. One palette token change cascades across every panel — no per-panel restyle.
+
+**Motion stability.** Fish run their physics in sub-steps of ≤0.05s so high time-scale (4×, 16×) doesn't overshoot the steering target and produce the "spinning in place" bug. Shrimp use a simpler 0.04s dt cap. Both have a heading-finite NaN guard and skip `look_at` when speed is below 0.04 (to stop micro-orientation snaps when nearly stationary).
+
+**Persistence.** Each tank slot has its own directory under `user://tanks/<slot>/` with `config.cfg` (tank parameters), `state.json` (full sim snapshot — substrate, plants, fish, shrimp, snails, eggs, waste), `meta.cfg` (name, runtime, timestamps), and `thumbnail.png`. The save header includes `substrate_type` and `tank_preset` so `TankSaves.is_active_save_compatible()` can reject loads that would put saltwater fish in a freshwater tank or load the old preset's stocking after the player switched presets.
 
 ## Roadmap
 
-- [ ] Spectator mode that auto-orbits and zooms on whoever's currently doing something interesting (breeding, hunting, dying)
-- [ ] Algae blooms when nutrients spike and plant biomass is low
-- [ ] Multiple biotopes (palettes for blackwater + hard-alkaline already exist in `shaders-godot/make_palette.py`)
-- [ ] Save/load tank state with a deterministic seed for shareable "tank genealogies"
-- [ ] Generative ambient audio keyed to population entropy
-- [ ] More fish species, more plant L-systems
+Done since the original roadmap:
+
+- [x] Save/load tank state — per-slot state.json with substrate + preset compatibility checks
+- [x] Multi-tank menu — duplicate, delete, switch between tanks
+- [x] More fish species — 10 species in the library + a mixed-morph reef school
+- [x] Multiple biotopes — the Reef preset switches the world to saltwater + corals
+- [x] Mobile support — touch input, bottom-right action cluster, idle-dim HUD
+- [x] Day / night behavior shifts — diurnal vs nocturnal activity multipliers
+- [x] Death sequence — sink + tilt + wither + mulm drop, instead of instant pop
+
+Up next: see [`docs/GOALS.md`](docs/GOALS.md) for a checklist of 50 ideas
+organized by category (motion, breeding, food web, plants, environment).
+Open it to pick the next session of work.
 
 ## License
 

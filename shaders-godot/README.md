@@ -1,38 +1,92 @@
 # Godot 4 rendering pipeline
 
-Two-shader pipeline for the Vivarium look:
+The look is a **3D voxel scene rendered through a 2D palette-quantize +
+dither shader**. The internal sim runs continuous — fish swim, plants grow,
+substrate diffuses — and the final pixel grid emerges from the shader pass,
+not from hand-authored sprites.
 
-1. **`palette_quantize.gdshader`** — applied to a `ColorRect` covering the low-res SubViewport output. Snaps incoming color to nearest palette entry, applies Bayer dither based on distance to next-nearest entry.
-2. **`water_volumetrics.gdshader`** — applied to the water-column quad inside the tank. Samples a density texture (written by the sim each frame), produces depth-attenuated water color with caustics + dust motes.
-
-## Scene structure
+## Pipeline
 
 ```
-Main (Node2D)
-├── SimDriver (Node)              # runs the Rust sim, writes textures
-├── SubViewportContainer
-│   └── SubViewport (384x216, stretch=true, render_mode=2D)
-│       ├── Tank (Node2D)
-│       │   ├── TankGlass (Sprite2D)        # hand-authored
-│       │   ├── WaterVolume (ColorRect)      # water_volumetrics.gdshader
-│       │   ├── Substrate (Sprite2D)         # texture written by sim
-│       │   ├── Plants (Node2D)              # L-system meshes
-│       │   ├── Fauna (Node2D)               # sprite per agent
-│       │   ├── Bubbles (GPUParticles2D)
-│       │   └── Detritus (GPUParticles2D)
-│       └── Room (Sprite2D)                  # backdrop behind tank
-└── Display (TextureRect)         # nearest-neighbor upscale, palette_quantize.gdshader
+  Camera3D in SubViewport (512×288)
+        │ renders voxel scene to a low-res texture
+        ▼
+  Display TextureRect
+        │ applies palette_quantize.gdshader (snap to 48-color palette + Bayer dither)
+        ▼
+  Window (nearest-neighbor upscale to whatever resolution)
 ```
 
-Set the `SubViewport` size to `384 × 216`, `Snap 2D Transforms to Pixel = true`, default canvas item filter = `Nearest`.
+The SubViewport is the standard size — 512×288. The voxel scene lives
+inside it as `SubViewport/World/...`. The `Display` `TextureRect`
+samples the SubViewport's render and feeds it through the palette shader
+on its way to the window.
 
-The `Display` `TextureRect` sources `SubViewportContainer`'s output as its texture, sized to the window, with the palette quantize shader as material.
+## Shaders
+
+| File | Purpose |
+|---|---|
+| `palette_quantize.gdshader` | Output stage. Snaps every pixel to the nearest of 48 palette colors using a Bayer 4×4 dither between the two nearest hits. |
+| `voxel.gdshader` | Unshaded, face-based brightness (top 100%, sides 82% / 68%, bottom 50%). Lets cubes self-light without a directional light fighting the palette. |
+| `circle_mask.gdshader` | PiP portal — circular feathered cutout for the follow-camera bubble. |
+| `water_volumetrics.gdshader` | Legacy 2D-pipeline volumetric — not currently used in the 3D path; retained as reference. |
+
+## Scene structure (current — Godot 4, 3D)
+
+```
+Main (Node)                          # main.gd, root
+├── SubViewport (512×288)            # the actual 3D scene
+│   └── World (Node3D)               # world.gd, builds substrate + plants + creatures
+│       ├── WorldEnvironment         # palette-friendly soft env
+│       ├── DirectionalLight3D       # very low energy, fill only
+│       ├── Camera3D                 # driven by main.gd's orbit code
+│       ├── SimDriver (Node)         # sim_driver.gd, 10 Hz brain tick
+│       ├── SubstrateGrid            # nutrient field + voxel substrate
+│       ├── Hardscape                # stones, driftwood
+│       ├── PlantsRoot               # plant.gd children
+│       ├── Fish / Shrimp / Snails   # agent containers
+│       └── Waste                    # mulm + detritus
+├── Display (TextureRect)            # palette_quantize material
+├── PortalContainer (Control)        # PiP follow-cam
+├── TopHUD (Control)                 # cluster pills + chip strip
+├── SettingsPanel / RenderPanel / FishStorePanel
+├── AquascapeToolPalette             # build-mode dirt/stone/wood/dig
+├── ControlsHint (Label)             # bottom-edge keyboard hint
+├── MobileHUD                        # bottom-corner touch buttons
+└── AmbientAudio
+```
+
+The Sim runs at 10 Hz inside `SimDriver._tick()`; every agent's `_process()`
+runs at render rate and does smooth heading + speed integration so motion
+stays fluid between brain ticks. See the top-level [README.md](../README.md)
+for architecture details on the food web, schooling, lifecycles, motion
+stability, and persistence.
+
+## Editor setup
+
+| Setting | Value |
+|---|---|
+| `Rendering / Default Texture Filter` | Nearest |
+| `Rendering / Mobile renderer` (preferred for color stability) | Mobile |
+| `Display / Window / Stretch / Mode` | viewport |
+| `Display / Window / Handheld / Orientation` | sensor |
+| `2D / Snap / Snap 2D Transforms to Pixel` | true |
+| Project name | Vivarium |
+| Main scene | `res://tank_menu.tscn` |
 
 ## Quickstart
 
-1. Open Godot 4.2+, create a new project at this folder.
-2. Generate a starter palette PNG: run `python3 make_palette.py` (script included) to write `palettes/planted_48.png`.
-3. Build the scene above; assign shaders.
-4. Press play. You should see a chunky-pixel tank with rising bubbles.
+1. Open Godot 4.6+, **Import** this `godot-project/` directory.
+2. If the palette PNG looks off, regenerate it: `python3 ../make_palette.py`.
+3. Press **F5** — should open the tank menu. Click **+ New tank**.
 
-The shaders are written to be Stage-1 of the project — they prove the look. You'll add real sim textures (substrate, water density, chemistry tint) once `sim-rust/` is wired in via GDExtension.
+## Adding a species
+
+Append an entry to `scripts/tank_config.gd`'s `SPECIES_LIBRARY` dict.
+Required fields: `label`, `description`, `genome` (with at least
+`species`, colors, `adult_voxel_scale`, `max_speed`, `preferred_y`).
+World.gd reads the library at spawn time — no other code needs to know.
+
+Then reference the new species by key in any preset's `stocking` dict in
+`TANK_PRESETS`, or add a brand new preset. Both the settings dropdown
+and the Species & Diet chart pick up the new entry automatically.
