@@ -83,6 +83,18 @@ var _root_growth_counter: int = 0  # grows one root per N stem voxels
 var health: float = 1.0  # 1.0 = thriving, 0.0 = dying
 var _health_smooth: float = 1.0  # low-pass filtered for visual changes
 var _starvation_timer: float = 0.0
+
+# ---- Shade competition ----
+# Refreshed every few seconds (not per-tick — the answer changes slowly
+# and a per-tick neighbor scan would be O(plants²) hot path). Cached
+# value is multiplied into nutrient_mult so a shaded plant grows slower
+# without needing a separate growth_rate field. 1.0 = full sun, <1.0 =
+# shaded by a taller neighbor within SHADE_RADIUS.
+var _shade_mult: float = 1.0
+var _shade_check_t: float = 0.0
+const SHADE_RADIUS: float = 1.4
+const SHADE_HEIGHT_DELTA: int = 2  # neighbor must be at least this much taller
+const SHADE_PENALTY: float = 0.55  # multiplier on nutrient_mult when shaded
 var _has_pinholes: bool = false
 
 # ---- Flowering lifecycle ----
@@ -482,6 +494,31 @@ func biomass() -> int:
 	return current_height
 
 
+# Scan sibling plants under plants_root for the tallest one within
+# SHADE_RADIUS. If at least one is meaningfully taller (SHADE_HEIGHT_DELTA),
+# this plant is shaded and grows slower. Called from tick() every few
+# seconds, not per-tick, since the answer is slow-moving.
+func _recompute_shade() -> void:
+	_shade_mult = 1.0
+	var parent := get_parent()
+	if parent == null:
+		return
+	var rad2: float = SHADE_RADIUS * SHADE_RADIUS
+	for child in parent.get_children():
+		if child == self or not (child is Plant):
+			continue
+		var op: Plant = child
+		if not is_instance_valid(op):
+			continue
+		var dx: float = op._world_pos.x - _world_pos.x
+		var dz: float = op._world_pos.z - _world_pos.z
+		if dx * dx + dz * dz > rad2:
+			continue
+		if op.current_height > current_height + SHADE_HEIGHT_DELTA:
+			_shade_mult = SHADE_PENALTY
+			return  # one is enough; no need to scan more
+
+
 # Called by SimDriver each tick.
 func tick(dt: float, substrate: SubstrateGrid) -> void:
 	_t += dt
@@ -499,6 +536,19 @@ func tick(dt: float, substrate: SubstrateGrid) -> void:
 	var available: float = substrate.get_at(_world_pos)
 	var nutrient_mult: float = clampf(
 		(available - substrate.NUTRIENT_BASELINE) / 0.4, 0.0, 1.0)
+
+	# Shade competition. Refresh every ~4-6 sim seconds (cheap to scan
+	# sibling plants, but no need to do it per tick — taller neighbors
+	# don't appear suddenly). Reduces effective nutrient_mult so a shaded
+	# plant visibly grows slower than its taller crowd-out neighbor.
+	# Real Walstad tanks show this constantly: fast stems block carpet
+	# plants until you trim them.
+	_shade_check_t -= dt
+	if _shade_check_t <= 0.0:
+		_shade_check_t = randf_range(4.0, 6.0)
+		_recompute_shade()
+	nutrient_mult *= _shade_mult
+
 	# Health trends toward nutrient satisfaction, with slow decay when starved.
 	var target_health: float = 0.35 + 0.65 * nutrient_mult
 	health = lerpf(health, target_health, dt * 0.03) # slower health changes

@@ -1066,6 +1066,52 @@ func _substrate_top_y() -> float:
 	return float(world.get("SUBSTRATE_DEPTH")) if world != null else 1.6
 
 
+# Project cursor onto the water surface plane (y = WATER_HEIGHT). Symmetric
+# with _project_to_substrate but hits the *top* of the water. Used by the
+# Ctrl+LMB tap-to-feed gesture so flakes drop at the precise surface point
+# the player tapped, then bob there for 8 sim-seconds before falling
+# (waste_particle.gd handles the bob).
+func _project_to_surface(mouse_pos: Vector2) -> Vector3:
+	if camera == null or world == null:
+		return INVALID_HIT
+	var sv_pos: Vector2 = _window_mouse_to_viewport(mouse_pos)
+	var origin: Vector3 = camera.project_ray_origin(sv_pos)
+	var dir: Vector3 = camera.project_ray_normal(sv_pos)
+	var surface_y: float = float(world.get("WATER_HEIGHT")) if world.get("WATER_HEIGHT") != null else 6.5
+	if dir.y > -0.01:
+		return INVALID_HIT
+	var t: float = (surface_y - origin.y) / dir.y
+	if t < 0.0:
+		return INVALID_HIT
+	var hit: Vector3 = origin + dir * t
+	if world.has_method("is_inside_tank"):
+		if not world.is_inside_tank(hit.x, hit.z, 0.3):
+			return INVALID_HIT
+	return hit
+
+
+# Drop a cluster of 4-6 food pellets at the surface point under the cursor.
+# Returns true if the cluster spawned (used by the caller to suppress orbit
+# drag for that gesture so the camera doesn't yank during feeding).
+# Each pellet bobs on the surface for ~8s before sinking — exactly like
+# real flake food. Fish converge on it via the existing food-pickup tier.
+func _drop_food_at_cursor(mouse_pos: Vector2) -> bool:
+	if _sim == null:
+		return false
+	var hit: Vector3 = _project_to_surface(mouse_pos)
+	if hit == INVALID_HIT:
+		return false
+	var count: int = randi_range(4, 6)
+	for i in count:
+		# Small jitter so the cluster reads as a sprinkle, not a stack.
+		var jx: float = randf_range(-0.18, 0.18)
+		var jz: float = randf_range(-0.18, 0.18)
+		var pos: Vector3 = Vector3(hit.x + jx, hit.y - 0.02, hit.z + jz)
+		_sim._spawn_waste(pos, 0.45, 3)  # 3 = KIND_FOOD
+	print_verbose("[vivarium] tap-feed: %d flakes at %s" % [count, hit])
+	return true
+
+
 func _aquascape_place(mouse_pos: Vector2) -> void:
 	if world == null:
 		return
@@ -1384,10 +1430,23 @@ func _input(event: InputEvent) -> void:
 				radius = minf(MAX_RADIUS, radius * ZOOM_FACTOR)
 				_apply_camera()
 			elif mb.button_index == MOUSE_BUTTON_LEFT:
+				# Close history popup on any click outside it (chips themselves
+				# go through their own gui_input handler before this runs).
+				if _history_popup != null and _history_popup.visible \
+						and not _history_popup.get_global_rect().has_point(mb.position):
+					_history_popup.visible = false
+				# Ctrl+LMB = tap-to-feed. Projects the cursor onto the water
+				# surface and drops a small cluster of food pellets there;
+				# nearby fish converge from below. Suppresses orbit so the
+				# camera doesn't yank during the feed gesture.
+				if Input.is_key_pressed(KEY_CTRL) \
+						or Input.is_key_pressed(KEY_META):
+					if _drop_food_at_cursor(mb.position):
+						_suppress_drag_until_release = true
 				# If the click hit a creature, suppress the polled orbit drag
 				# for this LMB gesture — without this, every successful pick
 				# also yanked the camera as the user moved the cursor.
-				if _click_targets_creature():
+				elif _click_targets_creature():
 					_suppress_drag_until_release = true
 
 
@@ -1839,6 +1898,14 @@ func _build_hud_chips() -> void:
 		var chip: Control = _make_chip(String(d["icon"]), d["color"] as Color)
 		bar.add_child(chip)
 		_chips[d["key"]] = chip
+		# Tapping a chip opens a sparkline popup showing the last ~2 minutes
+		# of that metric's history. PanelContainer accepts gui_input out of
+		# the box; we route the key + accent color along so the popup can
+		# title + tint itself.
+		var key: String = String(d["key"])
+		var color: Color = d["color"] as Color
+		chip.mouse_filter = Control.MOUSE_FILTER_STOP
+		chip.gui_input.connect(func(ev): _on_chip_gui_input(ev, key, color))
 
 
 # Construct a single chip widget. Caches the value + sublabel Labels via meta
@@ -1973,6 +2040,183 @@ func _apply_hud_layout() -> void:
 
 	# Re-render chip values so the compact-fauna branch kicks in immediately.
 	_render_header()
+
+
+# Chip-tap handler — opens a sparkline popup with the last ~2 minutes of
+# history for that metric. The mapping from chip key to the sim's
+# population_history key is mostly identity, with a couple of aliases for
+# chips that aggregate (e.g. "flora" → plants_alive, "water" → dissolved_o2).
+const _CHIP_TO_HISTORY := {
+	"fish": "fish_total",
+	"shrimp": "shrimp_total",
+	"snails": "snails_total",
+	"flora": "plants_alive",
+	"water": "dissolved_o2",
+	"alert": "algae_clusters",
+}
+
+
+func _on_chip_gui_input(ev: InputEvent, key: String, color: Color) -> void:
+	if not (ev is InputEventMouseButton):
+		return
+	var mb: InputEventMouseButton = ev
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var hist_key: String = _CHIP_TO_HISTORY.get(key, "")
+	if hist_key == "":
+		return  # state/morphs chips have no useful history
+	_show_history_popup(hist_key, key, color)
+
+
+# History popup. Single instance — reused across taps. Opens centered
+# under the StatsBar with the sparkline + min / max / current labels.
+var _history_popup: PanelContainer = null
+var _history_sparkline: Control = null
+var _history_title: Label = null
+var _history_stats: Label = null
+
+
+func _ensure_history_popup() -> void:
+	if _history_popup != null and is_instance_valid(_history_popup):
+		return
+	_history_popup = PanelContainer.new()
+	_history_popup.visible = false
+	_history_popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	_history_popup.custom_minimum_size = Vector2(320, 110)
+	# Match the cluster chrome — same look as the top HUD pills.
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.07, 0.12, 0.94)
+	style.border_color = Color(0.35, 0.45, 0.6, 0.6)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	style.shadow_color = Color(0, 0, 0, 0.45)
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(0, 6)
+	_history_popup.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_history_popup.add_child(vbox)
+
+	_history_title = Label.new()
+	_history_title.add_theme_font_size_override("font_size", 13)
+	_history_title.add_theme_color_override("font_color", Color(0.95, 0.96, 0.98))
+	vbox.add_child(_history_title)
+
+	_history_stats = Label.new()
+	_history_stats.add_theme_font_size_override("font_size", 10)
+	_history_stats.add_theme_color_override("font_color", Color(0.72, 0.78, 0.85, 0.85))
+	vbox.add_child(_history_stats)
+
+	_history_sparkline = _make_sparkline()
+	_history_sparkline.custom_minimum_size = Vector2(290, 56)
+	vbox.add_child(_history_sparkline)
+
+	add_child(_history_popup)
+
+
+# Build a Control whose _draw paints the polyline over a soft fill region.
+# Stores its data in metadata so we don't need a custom class file.
+func _make_sparkline() -> Control:
+	var c := Control.new()
+	c.set_meta("samples", [])
+	c.set_meta("color", Color.WHITE)
+	# Use a script-on-the-fly via a connected _draw lambda. Godot 4 supports
+	# the `draw` signal that fires when a Control redraws, which lets us
+	# paint without a separate .gd file.
+	c.draw.connect(func(): _draw_sparkline(c))
+	return c
+
+
+func _draw_sparkline(c: Control) -> void:
+	var samples: Array = c.get_meta("samples", [])
+	if samples.size() < 2:
+		return
+	var color: Color = c.get_meta("color", Color.WHITE)
+	var max_v: float = -INF
+	var min_v: float = INF
+	for v in samples:
+		var fv: float = float(v)
+		if fv > max_v:
+			max_v = fv
+		if fv < min_v:
+			min_v = fv
+	var rng: float = max_v - min_v
+	if rng < 0.001:
+		rng = 1.0
+	var sz: Vector2 = c.size
+	var dx: float = sz.x / float(samples.size() - 1)
+	var pts := PackedVector2Array()
+	for i in samples.size():
+		var v: float = float(samples[i])
+		var y: float = sz.y - ((v - min_v) / rng) * sz.y
+		pts.append(Vector2(i * dx, y))
+	# Soft fill under the line for legibility against the dark backdrop.
+	var fill := pts.duplicate()
+	fill.append(Vector2(sz.x, sz.y))
+	fill.append(Vector2(0, sz.y))
+	var fill_color := color
+	fill_color.a = 0.18
+	c.draw_colored_polygon(fill, fill_color)
+	c.draw_polyline(pts, color, 1.6, true)
+
+
+func _show_history_popup(hist_key: String, chip_key: String, color: Color) -> void:
+	_ensure_history_popup()
+	if _sim == null:
+		return
+	var hist: Array = _sim.population_history.get(hist_key, [])
+	if hist.is_empty():
+		# Single placeholder so the popup isn't empty on a fresh tank.
+		hist = [0, 0]
+	# Title + min/max/current line. We keep the units implicit (the chip's
+	# icon already conveys "fish" / "plants" / etc.) so the number itself
+	# is the focus.
+	var title := chip_key.capitalize()
+	_history_title.text = title + " — last %d s" % hist.size()
+	var cur: float = float(hist[-1])
+	var lo: float = float(hist[0])
+	var hi: float = float(hist[0])
+	for v in hist:
+		var fv: float = float(v)
+		if fv < lo:
+			lo = fv
+		if fv > hi:
+			hi = fv
+	_history_stats.text = "now %s   min %s   max %s" % [
+		_fmt_history(cur), _fmt_history(lo), _fmt_history(hi),
+	]
+	_history_sparkline.set_meta("samples", hist.duplicate())
+	_history_sparkline.set_meta("color", color)
+	_history_sparkline.queue_redraw()
+	# Position centered under the stats bar.
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	_history_popup.size = _history_popup.custom_minimum_size
+	_history_popup.position = Vector2(
+		(vp.x - _history_popup.size.x) * 0.5,
+		56.0,
+	)
+	_history_popup.visible = true
+
+
+# Tight number formatter: integers as-is, fractions to 2 decimals.
+# Keeps the "now 1.00   min 0.85   max 1.00" row readable for the
+# dissolved_o2 chip which is in [0, 1] while still showing "now 12"
+# for integer-valued fish counts.
+func _fmt_history(v: float) -> String:
+	if absf(v - round(v)) < 0.005:
+		return str(int(round(v)))
+	return "%.2f" % v
 
 
 # Mirror MobileHUD's idle-dim for the top HUD. Resets the timer; called from

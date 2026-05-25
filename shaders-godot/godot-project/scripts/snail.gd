@@ -148,12 +148,22 @@ func _process(dt: float) -> void:
 	# snail population is below the cap. Otherwise just reset and try again
 	# later. Without this guard, snails carpet the entire tank floor in
 	# minutes - they're nature's r-strategists.
+	#
+	# Predator-rebound: when no snail-hunters (loach / puffer) are in the
+	# tank, snail breeding accelerates — the visible "no predators, snail
+	# boom" dynamic you see in real tanks after a loach dies. We halve the
+	# next breeding interval, doubling the laying rate. When a hunter is
+	# present, intervals are normal and the cap-driven equilibrium holds.
 	if not is_baby:
 		_t_until_breed -= dt
 		if _t_until_breed <= 0.0:
 			if _count_snails() < POPULATION_CAP:
 				_lay_egg_sac()
-			_t_until_breed = randf_range(BREEDING_INTERVAL_MIN, BREEDING_INTERVAL_MAX)
+			var rebound: float = 1.0
+			if sim != null and int(sim.snail_predator_count) == 0:
+				rebound = 0.5
+			_t_until_breed = randf_range(BREEDING_INTERVAL_MIN,
+				BREEDING_INTERVAL_MAX) * rebound
 
 	# Smoothly turn the visual "facing" toward the target direction. Snails
 	# don't snap directions; they pivot slowly.

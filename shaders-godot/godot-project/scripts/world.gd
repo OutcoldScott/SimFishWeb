@@ -275,8 +275,20 @@ func _process(dt: float) -> void:
 	if _water_material_ref != null:
 		var tannin_color := Color(0.83, 0.55, 0.25)
 		var base_water := Color(C_WATER_SHALLOW.r, C_WATER_SHALLOW.g, C_WATER_SHALLOW.b)
+		# Tannin tint first (slow brown shift from driftwood).
 		var tinted: Color = base_water.lerp(tannin_color, tannins * 0.55)
-		tinted.a = 0.10 + tannins * 0.10
+		# Algae bloom tint: lerp toward a soft green proportional to
+		# sim.bloom_intensity. The green also boosts opacity — a fully
+		# bloomed tank reads as cloudy / green-water, not just slightly
+		# tinted. Capped at 0.55 lerp so the worst-case still shows the
+		# fish silhouettes through the haze.
+		var bloom: float = 0.0
+		if sim != null:
+			bloom = float(sim.bloom_intensity)
+		if bloom > 0.01:
+			var algae_green := Color(0.36, 0.62, 0.32)
+			tinted = tinted.lerp(algae_green, bloom * 0.55)
+		tinted.a = 0.10 + tannins * 0.10 + bloom * 0.18
 		_water_material_ref.albedo_color = tinted
 
 	# Day/night light cycle. The DirectionalLight gives soft ambient room

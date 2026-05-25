@@ -58,6 +58,19 @@ var world: Node = null
 # by the filter" loop that real planted tanks always have.
 var filter_intake_pos: Vector3 = Vector3.ZERO
 
+# Bloom intensity 0..1 (smoothed). Driven by the algae step each tick;
+# world.gd reads it to lerp the water material toward green. Smoothing
+# keeps the water tint from flickering on per-tick nutrient noise.
+var bloom_intensity: float = 0.0
+
+# Count of fish with snail_predator genome flag, refreshed each tick.
+# snail.gd reads it: when 0 (no snail-hunter in tank), snail breeding
+# accelerates — the visible "no predators, snail boom" rebound dynamic.
+# Plant biomass exposed at the same cadence so other systems don't
+# have to iterate plants[] themselves.
+var snail_predator_count: int = 0
+var total_plant_biomass: int = 0
+
 var _accum: float = 0.0
 var _stats_timer: float = 0.0
 var _extinction_timer: float = 0.0
@@ -316,8 +329,18 @@ func _tick(dt: float) -> void:
 					fy = float(water_h) - 0.1
 			_spawn_waste(Vector3(spawn_x, fy, spawn_z), 0.5, 3) # 3 = KIND_FOOD
 
-	# 6c. Algae - bloom if conditions favor (high nutrients + low plant biomass),
-	# decay otherwise. Tracking is sparse to keep voxel count reasonable.
+	# 6c. Algae bloom dynamics.
+	#
+	# Real planted tanks cycle: nutrients spike from over-feeding or new
+	# substrate → algae bloom → green water → plants outcompete and
+	# nutrients drop → bloom crashes → balance returns. We model this as
+	# a continuous `bloom_pressure` (0..1) instead of a binary flag so:
+	#   - spawn rate ramps gradually (no on/off pop-in)
+	#   - cap rises during high pressure (a real bloom can carpet a tank)
+	#   - water tint can lerp toward green proportionally
+	#   - crash phase (high biomass, low nutrients) accelerates die-off
+	# `bloom_intensity` is published on sim so world.gd's _process can
+	# tint the water material to match.
 	var n_total: float = 0.0
 	if substrate != null:
 		n_total = substrate.total_above_baseline()
@@ -325,26 +348,49 @@ func _tick(dt: float) -> void:
 	for p in plants:
 		if is_instance_valid(p):
 			plant_biomass += p.biomass()
-	var bloom_favor: bool = n_total > 4.0 and plant_biomass < 350
+	total_plant_biomass = plant_biomass
+	# Refresh snail-predator count for snail.gd's rebound logic. Cheap
+	# (iterating fish is already done elsewhere; here we just count flags).
+	var sp_count: int = 0
+	for f in fish:
+		if not is_instance_valid(f):
+			continue
+		if bool(f.get("snail_predator")):
+			sp_count += 1
+	snail_predator_count = sp_count
+	# Nutrient pressure: 0 at <=2.0 N, 1.0 at >=8.0 N.
+	var n_pressure: float = clampf((n_total - 2.0) / 6.0, 0.0, 1.0)
+	# Plant-shortage pressure: 0 when biomass >=450 (mature planted tank),
+	# 1.0 when biomass <=150 (sparse / cycling tank).
+	var plant_shortage: float = clampf((450.0 - float(plant_biomass)) / 300.0, 0.0, 1.0)
+	# Combined bloom pressure. Multiplicative: needs BOTH high nutrients AND
+	# low plant biomass to bloom. Either factor at 0 zeroes the bloom.
+	var bloom_pressure: float = n_pressure * plant_shortage
+	bloom_intensity = lerpf(bloom_intensity, bloom_pressure, clampf(dt * 0.25, 0.0, 1.0))
+	var bloom_favor: bool = bloom_pressure > 0.35  # for algae.tick's pressure-curve
+
+	# Cap rises with bloom intensity — a fully blooming tank can carpet up
+	# to ~110 clusters; a balanced one tops out around 50.
+	var bloom_cap: int = int(lerpf(50.0, 110.0, bloom_intensity))
 	# Algae floor: always keep at least 3 clusters drifting so the cory /
 	# algae_grazer food chain has something to graze even in a "clean"
 	# tank. Without this baseline, the moment algae crashes the grazers
-	# starve and the food web stalls. Force-spawn when below the floor
-	# regardless of nutrient state.
+	# starve and the food web stalls.
 	const ALGAE_FLOOR: int = 3
 	var below_floor: bool = algae.size() < ALGAE_FLOOR
-	var should_bloom: bool = bloom_favor or below_floor
-	# Cap algae count so it doesn't explode.
-	if should_bloom and algae.size() < 60 and algae_root != null \
-			and (below_floor or randf() < 0.2):
+
+	# Spawn-rate ramps from 5% (baseline trickle) up to ~45% per-tick when
+	# the bloom is full. Plus a force-spawn when we're below the floor.
+	var spawn_chance: float = 0.05 + bloom_pressure * 0.40
+	if (below_floor or randf() < spawn_chance) and algae.size() < bloom_cap \
+			and algae_root != null:
 		var a := Algae.new()
 		algae_root.add_child(a)
 		# Spawn position uses the world's tank-aware sampler so algae stay
 		# inside hex/triangle/cube tanks instead of clipping through walls.
 		# Y is anchored near the substrate (0.3-1.2 above) where algae
 		# would actually grow in a real tank AND where algae_grazer
-		# corydoras can reach them. The old random Y in (2.2, 5.5) put
-		# them mid-water floating uselessly.
+		# corydoras can reach them.
 		var spawn_x: float = 0.0
 		var spawn_z: float = 0.0
 		var w := get_parent()
@@ -353,8 +399,6 @@ func _tick(dt: float) -> void:
 			spawn_x = xz.x
 			spawn_z = xz.y
 		else:
-			# Fallback: clamp to world_bounds. Better than the old hardcoded
-			# range, still won't perfectly fit hex/triangle.
 			spawn_x = randf_range(world_bounds.position.x + 0.5,
 				world_bounds.end.x - 0.5)
 			spawn_z = randf_range(world_bounds.position.z + 0.5,
@@ -368,12 +412,19 @@ func _tick(dt: float) -> void:
 		]
 		a.init(palette[randi() % palette.size()])
 		algae.append(a)
-	# Tick existing algae.
+	# Tick existing algae. Crash phase: when plants are healthy (biomass
+	# high) AND nutrients have dropped (n_total low), algae die faster.
+	# This is the visible "plants outcompete the bloom" payoff that closes
+	# the cycle — without it the bloom would just plateau.
+	var crash: bool = plant_biomass > 380 and n_total < 3.5
 	var dead_algae: Array = []
 	for a in algae:
 		if not is_instance_valid(a):
 			continue
 		if a.tick(dt, bloom_favor):
+			dead_algae.append(a)
+		elif crash and randf() < dt * 0.12:
+			# Accelerated die-off during the crash window.
 			dead_algae.append(a)
 	for a in dead_algae:
 		algae.erase(a)
@@ -713,8 +764,41 @@ func _emit_stats() -> void:
 		"dissolved_o2": dissolved_o2,
 		"aeration_fixture": aeration_fixture,
 	}
+	# Capture this snapshot into the ring buffer so chip-tap sparklines have
+	# a 2-minute history to draw. _emit_stats fires at 1 Hz so HISTORY_LEN
+	# entries = HISTORY_LEN seconds of history. Cheap (one append + maybe a
+	# pop_front per metric per second).
+	_push_history_sample(s)
 	stats_changed.emit(s)
 	print_verbose("[vivarium] ", s)
+
+
+# ---- Population history ring buffer ----
+#
+# 120-second rolling window of the headline stat values, sampled at the
+# 1 Hz _emit_stats cadence. main.gd reads this when the user taps a chip
+# in the top HUD and renders it as a sparkline so you can see boom-bust
+# population cycles visually instead of having to remember the last
+# value you saw. Keys mirror chip ids where reasonable.
+const HISTORY_LEN: int = 120
+var population_history: Dictionary = {
+	"fish_total": [],
+	"shrimp_total": [],
+	"snails_total": [],
+	"algae_clusters": [],
+	"plants_alive": [],
+	"plant_total_biomass": [],
+	"substrate_nutrients_total": [],
+	"dissolved_o2": [],
+}
+
+
+func _push_history_sample(stats: Dictionary) -> void:
+	for key in population_history.keys():
+		var arr: Array = population_history[key]
+		arr.append(stats.get(key, 0))
+		if arr.size() > HISTORY_LEN:
+			arr.pop_front()
 
 
 # ============================================================================
