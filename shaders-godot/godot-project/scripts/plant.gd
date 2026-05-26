@@ -612,19 +612,57 @@ func _apply_deficiency_tints(nutrient_mult: float) -> void:
 		tint = Color(0.88, 0.95, 0.84)   # pale, slightly chlorotic
 	elif new_state == "iron":
 		tint = Color(1.05, 1.0, 0.55)    # yellow new-growth chlorosis
-	# Apply to the top quartile of voxels (newest growth). The voxel
-	# shader has an `instance uniform vec4 tint` so we can multiply per
-	# voxel without duplicating its material — cheap and lets the same
-	# base color shine through everywhere else.
-	var clean: Color = Color(1, 1, 1, 1)
+	# Apply to the top quartile of voxels (newest growth). We can't use
+	# `instance uniform` for this — Godot 4 allocates a buffer slot for
+	# every instance using that shader, and the tank has thousands of
+	# voxels, so it blows past the global-shader-params buffer. Instead,
+	# duplicate the material per tinted voxel and bake the tint into
+	# its `albedo`. Original colors are recovered by re-fetching from
+	# the per-voxel `base_color` meta we set at build time (see
+	# VoxelMat callers), or by leaving the duplicated material in place
+	# on the lucky few that already had a unique mat.
 	var n: int = voxels.size()
 	var cutoff: int = maxi(1, n - int(ceil(float(n) * 0.25)))
 	for i in n:
 		var vx: MeshInstance3D = voxels[i]
 		if not is_instance_valid(vx):
 			continue
-		vx.set_instance_shader_parameter("tint",
-			tint if i >= cutoff else clean)
+		if i >= cutoff and new_state != "":
+			_apply_voxel_tint(vx, tint)
+		else:
+			_clear_voxel_tint(vx)
+
+
+# Apply a multiplicative tint to a voxel by duplicating its (cached, shared)
+# ShaderMaterial and rewriting albedo on the copy. Stores the original
+# albedo in a meta so _clear_voxel_tint can restore it. Idempotent — if
+# the voxel already has a tinted-copy material, just update the albedo.
+func _apply_voxel_tint(vx: MeshInstance3D, tint: Color) -> void:
+	var sm: ShaderMaterial = vx.material_override as ShaderMaterial
+	if sm == null:
+		return
+	var orig: Color
+	if vx.has_meta("base_albedo"):
+		orig = vx.get_meta("base_albedo")
+	else:
+		orig = sm.get_shader_parameter("albedo")
+		vx.set_meta("base_albedo", orig)
+	if not vx.has_meta("tint_mat"):
+		var dup: ShaderMaterial = sm.duplicate() as ShaderMaterial
+		vx.material_override = dup
+		vx.set_meta("tint_mat", true)
+	(vx.material_override as ShaderMaterial).set_shader_parameter(
+		"albedo", orig * tint)
+
+
+# Restore a voxel's original (cached, shared) material. Cheap when the
+# voxel was never tinted (no-op).
+func _clear_voxel_tint(vx: MeshInstance3D) -> void:
+	if not vx.has_meta("tint_mat"):
+		return
+	var orig: Color = vx.get_meta("base_albedo")
+	vx.material_override = VoxelMat.make(orig)
+	vx.remove_meta("tint_mat")
 
 
 # Called by SimDriver each tick.

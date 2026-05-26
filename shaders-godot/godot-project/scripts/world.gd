@@ -2121,13 +2121,18 @@ func _spawn_mulm_layer() -> void:
 # of voxels carry the cream/white biofilm tint. Deterministic so the
 # pattern doesn't shimmer between updates (a voxel that's tinted at
 # 0.40 stays tinted at 0.65).
+#
+# We can't use instance_shader_parameter — that allocates a per-instance
+# slot in the global-shader-params buffer, and with thousands of voxels
+# the buffer overflows. Instead duplicate the material per tinted voxel.
+# Biofilm only touches ~30-50 driftwood voxels max, so the per-tinted-
+# voxel material cost is negligible.
 func _apply_biofilm_tints() -> void:
 	if _driftwood_voxels.is_empty():
 		return
 	var cream: Color = Color(1.28, 1.22, 1.10)  # warm-white biofilm
-	var clean: Color = Color(1.0, 1.0, 1.0)
 	# Higher progress → smaller denominator → more voxels tinted.
-	# At progress=0.0, denom>=100 → ~0 voxels tinted.
+	# At progress=0.0, denom≈20 → ~5% tinted.
 	# At progress=0.65, denom≈2 → ~half tinted.
 	var denom: int = maxi(1, int(round(20.0 - biofilm_progress * 28.0)))
 	for i in _driftwood_voxels.size():
@@ -2135,12 +2140,39 @@ func _apply_biofilm_tints() -> void:
 		if not is_instance_valid(vx):
 			continue
 		var tinted: bool = (hash(i * 73 + 13) % denom) == 0
-		# Blend the cream toward white based on biofilm strength so the
-		# tint also intensifies over time rather than just flipping on.
-		var tint_for_vx: Color = clean
 		if tinted:
-			tint_for_vx = clean.lerp(cream, clampf(biofilm_progress / 0.65, 0.0, 1.0))
-		vx.set_instance_shader_parameter("tint", tint_for_vx)
+			# Tint strength rises with overall biofilm progress so the
+			# pattern intensifies over time rather than just flipping on.
+			var t: Color = Color(1, 1, 1).lerp(
+				cream, clampf(biofilm_progress / 0.65, 0.0, 1.0))
+			_apply_driftwood_biofilm(vx, t)
+		else:
+			_clear_driftwood_biofilm(vx)
+
+
+func _apply_driftwood_biofilm(vx: MeshInstance3D, tint: Color) -> void:
+	var sm: ShaderMaterial = vx.material_override as ShaderMaterial
+	if sm == null:
+		return
+	var orig: Color
+	if vx.has_meta("base_albedo"):
+		orig = vx.get_meta("base_albedo")
+	else:
+		orig = sm.get_shader_parameter("albedo")
+		vx.set_meta("base_albedo", orig)
+	if not vx.has_meta("tint_mat"):
+		vx.material_override = sm.duplicate() as ShaderMaterial
+		vx.set_meta("tint_mat", true)
+	(vx.material_override as ShaderMaterial).set_shader_parameter(
+		"albedo", orig * tint)
+
+
+func _clear_driftwood_biofilm(vx: MeshInstance3D) -> void:
+	if not vx.has_meta("tint_mat"):
+		return
+	var orig: Color = vx.get_meta("base_albedo")
+	vx.material_override = VoxelMat.make(orig)
+	vx.remove_meta("tint_mat")
 
 
 # Spawn a brief dust burst at `pos` — 4-5 tiny dark voxels that puff up
