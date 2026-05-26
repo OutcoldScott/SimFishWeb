@@ -21,10 +21,10 @@ class_name NautilusPlant
 
 const VOXEL_SIZE: float = 0.18
 
-@export var a: float = 0.05
-@export var b: float = 0.22
-@export var total_turns: float = 3.5
-@export var y_per_turn: float = 0.55
+@export var a: float = 0.04
+@export var b: float = 0.11
+@export var total_turns: float = 3.2
+@export var y_per_turn: float = 0.75
 
 var _t: float = 0.0
 var _phase: float = 0.0

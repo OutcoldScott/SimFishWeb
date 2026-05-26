@@ -1719,10 +1719,10 @@ func _spawn_math_plants() -> void:
 		var p = nautilus_script.new()
 		container.add_child(p)
 		var ramp_choice: Array = green_ramp if randf() < 0.7 else red_ramp
-		p.a = _rng.randf_range(0.04, 0.07)
-		p.b = _rng.randf_range(0.18, 0.26)
-		p.total_turns = _rng.randf_range(3.0, 4.2)
-		p.y_per_turn = _rng.randf_range(0.45, 0.7)
+		p.a = _rng.randf_range(0.03, 0.05)
+		p.b = _rng.randf_range(0.09, 0.13)
+		p.total_turns = _rng.randf_range(3.0, 3.8)
+		p.y_per_turn = _rng.randf_range(0.6, 0.85)
 		p.init_at(Vector3(xz.x, SUBSTRATE_DEPTH + 0.1, xz.y), ramp_choice)
 		_math_plants.append(p)
 
