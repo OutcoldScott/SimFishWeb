@@ -19,6 +19,7 @@ config/features=PackedStringArray("4.6", "Mobile")
 
 TankSaves="*res://scripts/tank_saves.gd"
 TankConfig="*res://scripts/tank_config.gd"
+WebEmojiFallback="*res://scripts/web_emoji_fallback.gd"
 
 [display]
 

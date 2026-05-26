@@ -33,6 +33,11 @@ shaders-godot/godot-project/.godot/
 shaders-godot/godot-project/capture_raw.png
 shaders-godot/godot-project/capture_quantized.png
 
+# Web fallback fonts - downloaded + subsetted by the container font-builder
+# stage at build time, never committed. The .import sidecars Godot generates
+# for them are transient too.
+shaders-godot/godot-project/fonts/
+
 # Built macOS app + release artifacts - distributed via GitHub Releases.
 build/
 

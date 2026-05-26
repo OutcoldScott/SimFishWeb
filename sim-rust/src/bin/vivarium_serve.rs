@@ -239,6 +239,7 @@ fn mime_for(path: &Path) -> String {
         "jpg" | "jpeg" => "image/jpeg",
         "svg" => "image/svg+xml",
         "css" => "text/css; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
         "ico" => "image/x-icon",
         "pck" => "application/octet-stream",
         _ => "application/octet-stream",

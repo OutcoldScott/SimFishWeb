@@ -7,13 +7,29 @@
 #   podman    build -f container/Containerfile -t vivarium-serve .
 #   docker    build -f container/Containerfile -t vivarium-serve .
 #
-# Three stages:
-#   1. godot-builder: Exports the Godot project to HTML5/WASM. Forced to
-#      linux/amd64 because barichello's image is amd64-only; on arm64 hosts
-#      this stage runs under emulation (~30s instead of ~5s native).
-#   2. rust-builder: Compiles vivarium-serve in release mode.
-#   3. runtime: Minimal Debian with just the binary, the exported web
+# Four stages:
+#   1. font-builder: Downloads + subsets the web fallback fonts (emoji +
+#      symbols) to just the glyphs the UI uses as icons.
+#   2. godot-builder: Exports the Godot project to HTML5/WASM, with the
+#      subset fonts dropped in first. Forced to linux/amd64 because
+#      barichello's image is amd64-only; on arm64 hosts this stage runs
+#      under emulation (~30s instead of ~5s native).
+#   3. rust-builder: Compiles vivarium-serve in release mode.
+#   4. runtime: Minimal Debian with just the binary, the exported web
 #      assets, and the env -> CLI entrypoint shim.
+
+# ---- Font subset stage ----------------------------------------------------
+# The UI uses emoji + symbol glyphs as icons. The WASM runtime has no system
+# fonts to borrow (unlike desktop), so those render as .notdef tofu boxes.
+# This stage fetches Noto Color Emoji + Noto Sans Symbols2 (OFL) and subsets
+# them to the ~29 glyphs actually used. The output is copied into the Godot
+# project below before export. Nothing font-related is committed to git;
+# only container/subset-fonts.py (code) lives in the repo.
+FROM docker.io/library/python:3.12-slim AS font-builder
+RUN pip install --no-cache-dir fonttools brotli
+WORKDIR /work
+COPY container/subset-fonts.py ./subset-fonts.py
+RUN python3 subset-fonts.py /fonts
 
 # ---- Godot web-export stage ----------------------------------------------
 # barichello/godot-ci bundles the headless Godot binary AND the matching
@@ -21,8 +37,21 @@
 # since raw godot can't --export-debug Web without the Web template installed.
 # Tag matches the project's Godot minor version (4.6.x).
 FROM --platform=linux/amd64 docker.io/barichello/godot-ci:4.6 AS godot-builder
+# Godot headless probes fontconfig for system fonts on startup; without the
+# shared lib it prints "Unable to load fontconfig, system font support is
+# disabled." We bundle our own fallback fonts so system fonts aren't needed,
+# but install the lib anyway to silence the error and let the probe succeed.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libfontconfig1 \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY shaders-godot/godot-project ./godot-project
+# Subset fallback fonts, dropped in before import so Godot imports + packs
+# them. web_emoji_fallback.gd (committed) chains them onto the fallback font
+# at runtime; it no-ops when the fonts are absent (local/desktop builds).
+# Only the .ttf files go into the project; the OFL notice is carried into the
+# runtime image's web root instead (see below).
+COPY --from=font-builder /fonts/*.ttf ./godot-project/fonts/
 # Godot won't create missing parent dirs for the export output.
 RUN mkdir -p /export
 # Two-step: --import primes the resource cache so any first-time .import
@@ -53,6 +82,10 @@ RUN groupadd --system vivarium \
 
 COPY --from=rust-builder /src/sim-rust/target/release/vivarium-serve /usr/local/bin/vivarium-serve
 COPY --from=godot-builder /export /opt/vivarium/web
+# OFL 1.1 condition 2: ship the fonts' copyright + license with the build.
+# The subset fonts also carry it embedded (nameIDs 0/13/14); this file is the
+# human-readable copy, served alongside the web assets.
+COPY --from=font-builder /fonts/THIRD_PARTY_NOTICES.txt /opt/vivarium/web/THIRD_PARTY_NOTICES.txt
 COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/vivarium-serve
 
