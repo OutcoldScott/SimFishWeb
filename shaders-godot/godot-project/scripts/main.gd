@@ -1803,6 +1803,10 @@ func _push_telemetry_to_js() -> void:
 		# but multiplies the incoming delta by time_scale, so the *observed*
 		# tick rate scales with it. Pause => 0.
 		payload["sim_fps"] = float(_sim.SIM_HZ) * float(_sim.time_scale)
+		# Absolute sim runtime clock and aeration settings.
+		payload["elapsed_runtime_s"] = float(_sim.elapsed_runtime_s)
+		payload["aeration_air_rate"] = float(_sim.aeration_air_rate)
+		payload["aeration_flow_rate"] = float(_sim.aeration_flow_rate)
 	payload["render_fps"] = float(Engine.get_frames_per_second())
 	# Use compact JSON; the host shim parses it as a plain JS object.
 	var body: String = JSON.stringify(payload)
