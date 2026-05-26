@@ -82,18 +82,22 @@ them visibly alive.
 
 The medium itself — water, light, surface, sound — sells the immersion.
 
-- [ ] **41. Surface ripples from fish darts.** A fast direction change near the surface produces a small expanding ripple. *Effort: M · Impact: L*
-- [ ] **42. Visible current particles.** Subtle dust motes drifting along the flow vectors from the filter return. *Effort: M · Impact: M*
-- [ ] **43. Mineral spots on glass.** Over hours, faint white speckle appears on glass at the waterline. Cleared by a manual "wipe" gesture. *Effort: M · Impact: S*
-- [ ] **44. Surface caustics.** Light pattern scrolling across the substrate, sourced from a wavy surface mesh. *Effort: L · Impact: L*
-- [ ] **45. Day/night ambient audio crossfade.** Morning birds, midday quiet, evening cricket / cicada layer through the speakers behind the tank. *Effort: M · Impact: L*
-- [ ] **46. Heater glow.** A small visible heater rod with a faint warm light pulse. *Effort: S · Impact: S*
-- [ ] **47. Tank-condition mood indicator.** A subtle UI chip showing tank "vibe" — Thriving / Cycling / Stressed / Crashing — based on aggregate metrics. *Effort: M · Impact: M*
-- [ ] **48. Walstad cycle phase.** "Day 3: ammonia spike" / "Day 14: nitrites" / "Day 28: cycled" labels with appropriate algae behavior per phase. *Effort: L · Impact: L*
-- [ ] **49. Tank story log.** Auto-generated diary entries: "Day 5: glassdart pair formed" / "Day 12: first hatch" / "Day 18: betta lived 8 days, died of old age." *Effort: M · Impact: L*
-- [ ] **50. Multi-tank wallpaper mode.** Multiple tanks tiled across a wide window — the menu becomes a wall of tanks. *Effort: L · Impact: M*
+- [x] **41. Surface ripples from fish darts.** A fast direction change near the surface produces a small expanding ring. *Effort: M · Impact: L* — `world.spawn_burst_ripple(pos)` tweens a flat voxel ring outward + fades its albedo via duplicated material. Fish.gd calls it from the auto-dart branch when the fish is a top-water species (`preferred_y ≥ 4.0`) and bursting near its home Y.
+- [x] **42. Visible current particles.** Subtle dust motes drifting along the flow vectors from the filter return. *Effort: M · Impact: M* — already implemented: `world._emit_filter_outflow()` (called from `_build_filter_aerator`) emits a 14-particle GPUParticles3D jet of small pale spheres from the spout end, with downward-out direction + buoyancy gravity, so the stream curves into the tank then rises.
+- [x] **43. Mineral spots on glass.** Over hours, faint white speckle appears on glass at the waterline. *Effort: M · Impact: S* — `world._maybe_add_mineral_spot()` ticked from `_process` every 20-40 sim seconds. Picks a random wall + waterline-adjacent Y and sprinkles a tiny pale voxel. Capped at MINERAL_SPOT_CAP (35) so the glass ages visibly without ever fully crusting over.
+- [ ] **44. Surface caustics.** Light pattern scrolling across the substrate, sourced from a wavy surface mesh. *Effort: L · Impact: L* — deferred (needs a new shader / surface mesh).
+- [x] **45. Day/night ambient audio crossfade.** Morning birds, midday quiet, evening cricket / cicada layer through the speakers behind the tank. *Effort: M · Impact: L* — `ambient_audio.gd` now auto-triggers plinks at an interval that scales with `sim.daylight()` (3 s at midday → 12 s at midnight) and biases the pentatonic pitch higher in the day. The player's `volume_db` also lerps from -14 dB (midnight) to -6 dB (midday) so the day/night contrast reads as audible amplitude as well as cadence.
+- [x] **46. Heater glow.** A small visible heater rod with a faint warm light pulse. *Effort: S · Impact: S* — `world._build_heater()` drops a thin black-glass rod with a visible red filament strip at the back-right corner of the substrate, plus an OmniLight3D (warm orange, 1.4 unit range) so the rod genuinely glows in the corner.
+- [x] **47. Tank-condition mood indicator.** A subtle UI chip showing tank "vibe" — Thriving / Cycling / Stressed / Crashing — based on aggregate metrics. *Effort: M · Impact: M* — new "mood" chip in the top HUD. Aggregates `0.3 × O₂ + 0.3 × biomass-normalized + 0.2 × (1 - algae) + 0.2 × (1 - waste)` and maps to 🙂 thriving / 😌 ok / 😟 stressed / 🚨 crashing.
+- [ ] **48. Walstad cycle phase.** "Day 3: ammonia spike" / "Day 14: nitrites" / "Day 28: cycled" labels with appropriate algae behavior per phase. *Effort: L · Impact: L* — deferred (needs a tank-age counter wired through sim_driver + chip).
+- [x] **49. Tank story log.** Auto-generated diary entries: "Day 5: glassdart pair formed" / "Day 12: first hatch" / "Day 18: betta lived 8 days, died of old age." *Effort: M · Impact: L* — sim_driver.gd has `story_events: Array` capped at MAX_STORY_EVENTS (200). First-egg, first-hatch, first-natural-death milestones each fire once. Tapping the mood chip opens a centered RichTextLabel scroll listing events newest-first with elapsed-time prefixes ("12m", "1h 4m").
+- [ ] **50. Multi-tank wallpaper mode.** Multiple tanks tiled across a wide window — the menu becomes a wall of tanks. *Effort: L · Impact: M* — deferred (needs scene-switching infrastructure + a separate "wallpaper" mode toggle).
 
 ---
+
+## Bonus shipped (not in the original 50)
+
+- [x] **Lofi room environment.** TankConfig now carries an `environment_preset` and `ENVIRONMENT_PRESETS` dict with five themes: `void` (default — classic isolated tank), `bedroom_desk` (warm wood + plaster wall + bedside lamp + book stack + small plant), `sunny_window` (pale wood ledge + bright daylight tones), `dark_cabinet` (black-walnut display look), `forest_window` (mossy log shelf + green-filtered light). `world._build_room_environment()` paints a desk grid + brick-textured back wall + props + an OmniLight using palette-friendly colors so the room quantizes alongside the tank cleanly. Settings panel has a "Room" dropdown to swap themes.
 
 ## Bonus / out-of-the-fifty
 

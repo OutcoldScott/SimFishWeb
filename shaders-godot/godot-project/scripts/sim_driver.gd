@@ -537,6 +537,12 @@ func _tick(dt: float) -> void:
 					var k: int = WasteParticle.KIND_FISH if actor_kind == "fish" else WasteParticle.KIND_SHRIMP
 					_spawn_waste(actor.position, 0.4 if actor_kind == "fish" else 0.25, k)
 					actor.queue_free()
+				if not _logged_first_death:
+					_logged_first_death = true
+					var species_name: String = "creature"
+					if actor.has_method("get") and actor.get("species") != null:
+						species_name = String(actor.species)
+					log_story_event("First natural death — a %s reached the end of its lifespan." % species_name)
 
 
 func _spawn_waste(at: Vector3, amount: float, kind: int = 0) -> void:
@@ -638,6 +644,13 @@ func _lay_eggs(a: Fish, b: Fish) -> void:
 		)
 		e.init(g)
 		register_egg(e)
+	# Story log: first egg event for the session is a milestone worth
+	# recording. Subsequent spawns are routine and don't need to bloat
+	# the log.
+	if not _logged_first_egg:
+		_logged_first_egg = true
+		log_story_event("First eggs laid — a %s pair spawned %d eggs." % [
+			a.species, n])
 
 	# Pair-bonding species (currently angelfish via swim_pattern "hover")
 	# enter brooding mode: both parents hover near the nest and chase
@@ -665,6 +678,9 @@ func _hatch(e: FishEgg) -> void:
 	fry.energy = 1.0
 	register_fish(fry)
 	_play_ambient(0.7)  # joyful high plink on hatch
+	if not _logged_first_hatch:
+		_logged_first_hatch = true
+		log_story_event("First fry hatched — a baby %s entered the tank." % e.species)
 
 
 # Helper - look up the audio node and emit a plink. Cheap no-op if missing.
@@ -799,6 +815,43 @@ func _push_history_sample(stats: Dictionary) -> void:
 		arr.append(stats.get(key, 0))
 		if arr.size() > HISTORY_LEN:
 			arr.pop_front()
+
+
+# ---- Tank story log ----
+#
+# Append-only diary of meaningful events: first egg laid, first hatch,
+# first death, breeding pair formed, speciation event, algae bloom,
+# crash, etc. Each entry is `{"t": sim-seconds, "text": "..."}`. Capped
+# at MAX_STORY_EVENTS so a long-running tank doesn't bloat the save.
+# Read by main.gd's story dialog (tap "Menu" → "Story") so the player
+# can scroll back through the tank's history.
+const MAX_STORY_EVENTS: int = 200
+var story_events: Array = []
+# First-time-only flags so the diary doesn't repeat the same headline
+# every time the event fires.
+var _logged_first_egg: bool = false
+var _logged_first_hatch: bool = false
+var _logged_first_death: bool = false
+var _logged_first_morph: bool = false
+
+
+func log_story_event(text: String) -> void:
+	# Tag with elapsed runtime so the dialog can render "Day 3 morning"
+	# or "12 min ago" labels later. The text itself is kept short —
+	# headline-style — so the dialog stays scannable.
+	var entry: Dictionary = {
+		"t": elapsed_runtime_s,
+		"day_phase": day_phase,
+		"text": text,
+	}
+	story_events.append(entry)
+	if story_events.size() > MAX_STORY_EVENTS:
+		story_events.pop_front()
+	# Trigger an ambient plink so the player hears a story beat even if
+	# the dialog is closed.
+	var amb: Node = get_tree().current_scene.get_node_or_null("AmbientAudio")
+	if amb != null and amb.has_method("play_event_plink"):
+		amb.play_event_plink(0.7)
 
 
 # ============================================================================

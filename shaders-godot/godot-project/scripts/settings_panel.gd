@@ -31,6 +31,8 @@ var _aeration_option: OptionButton
 var _aeration_desc: Label
 var _aeration_strength: HSlider
 var _aeration_strength_label: Label
+var _environment_option: OptionButton
+var _environment_desc: Label
 var _aeration_x: HSlider
 var _aeration_x_label: Label
 var _auto_respawn_check: CheckBox
@@ -227,6 +229,23 @@ func _build_ui() -> void:
 		_aeration_x_label)
 	_aeration_x.value_changed.connect(func(v): _on_aeration_x(v))
 
+	# -- Room environment --
+	# The "scene" around the tank — desk, wall, lamp, plant. Default is
+	# "void" (no room) to preserve the classic isolated look; other
+	# presets dress up the tank for a cozier feel.
+	_add_section(vbox, "Room")
+	_environment_option = OptionButton.new()
+	_environment_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_environment_option.custom_minimum_size = Vector2(0, 30)
+	for key in TankConfig.ENVIRONMENT_PRESETS.keys():
+		var label: String = TankConfig.ENVIRONMENT_PRESETS[key]["label"]
+		_environment_option.add_item(label)
+		_environment_option.set_item_metadata(_environment_option.item_count - 1, key)
+	_environment_option.item_selected.connect(func(idx): _on_environment(idx))
+	vbox.add_child(_environment_option)
+	_environment_desc = PanelTheme.make_description()
+	vbox.add_child(_environment_desc)
+
 	# -- Species & diet chart --
 	# Read-only listing showing which species in the library hunt what. Lets
 	# the player understand WHY their puffer is eating their snails or their
@@ -313,6 +332,13 @@ func _pull_from_config() -> void:
 	_update_aeration_desc()
 	_aeration_strength_label.text = "%.2f" % _aeration_strength.value
 	_aeration_x_label.text = "%.2f" % _aeration_x.value
+	# Sync the environment dropdown to the saved preset.
+	if _environment_option != null:
+		for i in _environment_option.item_count:
+			if _environment_option.get_item_metadata(i) == TankConfig.environment_preset:
+				_environment_option.select(i)
+				break
+		_update_environment_desc()
 	_auto_respawn_check.button_pressed = TankConfig.auto_respawn_fauna
 	_auto_feed_check.button_pressed = TankConfig.auto_feed_fauna
 	# Pick the option matching current preset.
@@ -402,6 +428,18 @@ func _on_substrate(idx: int) -> void:
 func _on_aeration(idx: int) -> void:
 	TankConfig.aeration_type = _aeration_option.get_item_metadata(idx)
 	_update_aeration_desc()
+
+
+func _on_environment(idx: int) -> void:
+	TankConfig.environment_preset = _environment_option.get_item_metadata(idx)
+	_update_environment_desc()
+
+
+func _update_environment_desc() -> void:
+	var key: String = TankConfig.environment_preset
+	var preset: Dictionary = TankConfig.ENVIRONMENT_PRESETS.get(key, {})
+	if _environment_desc != null:
+		_environment_desc.text = String(preset.get("description", ""))
 
 
 func _on_aeration_strength(v: float) -> void:

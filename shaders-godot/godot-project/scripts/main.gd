@@ -1464,11 +1464,15 @@ func _input(event: InputEvent) -> void:
 				radius = minf(MAX_RADIUS, radius * ZOOM_FACTOR)
 				_apply_camera()
 			elif mb.button_index == MOUSE_BUTTON_LEFT:
-				# Close history popup on any click outside it (chips themselves
-				# go through their own gui_input handler before this runs).
+				# Close history / story popups on any click outside them
+				# (chips themselves go through their own gui_input handler
+				# before this runs).
 				if _history_popup != null and _history_popup.visible \
 						and not _history_popup.get_global_rect().has_point(mb.position):
 					_history_popup.visible = false
+				if _story_popup != null and _story_popup.visible \
+						and not _story_popup.get_global_rect().has_point(mb.position):
+					_story_popup.visible = false
 				# Ctrl+LMB = tap-to-feed. Projects the cursor onto the water
 				# surface and drops a small cluster of food pellets there;
 				# nearby fish converge from below. Suppresses orbit so the
@@ -1888,6 +1892,32 @@ func _render_header() -> void:
 	# Morphs chip — only meaningful once speciation has produced variants.
 	_update_chip("morphs", "+%d" % distinct_morphs, "morphs", distinct_morphs > 0, false)
 
+	# Mood chip — aggregate tank vibe across O₂, biomass, algae, waste.
+	# Weights tuned so a healthy planted tank reads as "thriving" and a
+	# crashed one as "🚨", with a clear in-between band so the chip
+	# changes meaningfully as the tank trends rather than flipping at
+	# one threshold. Mood is computed here rather than on sim_driver so
+	# it can read the same _stats snapshot already in scope.
+	var mood: float = 0.30 * o2 \
+		+ 0.30 * clampf(float(biomass) / 600.0, 0.0, 1.0) \
+		+ 0.20 * clampf(1.0 - float(algae) / 60.0, 0.0, 1.0) \
+		+ 0.20 * clampf(1.0 - float(waste) / 100.0, 0.0, 1.0)
+	var mood_label: String
+	var mood_glyph: String
+	if mood >= 0.78:
+		mood_glyph = "🙂"
+		mood_label = "thriving"
+	elif mood >= 0.55:
+		mood_glyph = "😌"
+		mood_label = "ok"
+	elif mood >= 0.32:
+		mood_glyph = "😟"
+		mood_label = "stressed"
+	else:
+		mood_glyph = "🚨"
+		mood_label = "crashing"
+	_update_chip("mood", mood_glyph, mood_label, true, mood < 0.32)
+
 	# Alert chip — surfaces the most pressing problem so a glance reveals trouble.
 	var has_alert: bool = false
 	var alert_value: String = "!"
@@ -1932,6 +1962,7 @@ func _build_hud_chips() -> void:
 	# left-to-right in the bar.
 	var defs: Array = [
 		{"key": "state",  "icon": "◴", "color": Color8(154, 168, 200)},
+		{"key": "mood",   "icon": "♥", "color": Color8(170, 220, 170)},
 		{"key": "fish",   "icon": "🐟", "color": Color8(214, 176, 112)},
 		{"key": "shrimp", "icon": "🦐", "color": Color8(214, 176, 112)},
 		{"key": "snails", "icon": "🐌", "color": Color8(214, 176, 112)},
@@ -2108,10 +2139,116 @@ func _on_chip_gui_input(ev: InputEvent, key: String, color: Color) -> void:
 	var mb: InputEventMouseButton = ev
 	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
+	# Mood chip opens the story log instead of a sparkline. The aggregate
+	# "how is the tank doing" feel routes naturally to "what happened in
+	# this tank's life so far."
+	if key == "mood":
+		_show_story_popup(color)
+		return
 	var hist_key: String = _CHIP_TO_HISTORY.get(key, "")
 	if hist_key == "":
 		return  # state/morphs chips have no useful history
 	_show_history_popup(hist_key, key, color)
+
+
+# Story popup — scrollable list of milestone events from sim.story_events.
+# Reuses the same chrome as the history popup but swaps the sparkline for
+# a RichTextLabel showing one event per line, newest first.
+var _story_popup: PanelContainer = null
+var _story_list: RichTextLabel = null
+
+
+func _ensure_story_popup() -> void:
+	if _story_popup != null and is_instance_valid(_story_popup):
+		return
+	_story_popup = PanelContainer.new()
+	_story_popup.visible = false
+	_story_popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	_story_popup.custom_minimum_size = Vector2(420, 240)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.07, 0.12, 0.94)
+	style.border_color = Color(0.35, 0.45, 0.6, 0.6)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	style.shadow_color = Color(0, 0, 0, 0.45)
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(0, 6)
+	_story_popup.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	_story_popup.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Tank story"
+	title.add_theme_font_size_override("font_size", 13)
+	title.add_theme_color_override("font_color", Color(0.95, 0.96, 0.98))
+	vbox.add_child(title)
+
+	_story_list = RichTextLabel.new()
+	_story_list.bbcode_enabled = true
+	_story_list.fit_content = false
+	_story_list.scroll_active = true
+	_story_list.scroll_following = false
+	_story_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_story_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_story_list.custom_minimum_size = Vector2(390, 180)
+	_story_list.add_theme_color_override("default_color", Color(0.86, 0.90, 0.96, 0.95))
+	_story_list.add_theme_font_size_override("normal_font_size", 11)
+	vbox.add_child(_story_list)
+
+	add_child(_story_popup)
+
+
+func _show_story_popup(_chip_color: Color) -> void:
+	_ensure_story_popup()
+	if _sim == null:
+		return
+	var events: Array = _sim.story_events
+	if events.is_empty():
+		_story_list.text = "[color=#9aa8c8]No story yet. Wait for things to happen.[/color]"
+	else:
+		var lines: Array[String] = []
+		# Newest events first so the most recent reads at the top.
+		for i in range(events.size() - 1, -1, -1):
+			var e: Dictionary = events[i]
+			var t: float = float(e.get("t", 0.0))
+			lines.append("[color=#9aa8c8]%s[/color]  %s" % [
+				_format_story_t(t), String(e.get("text", "")),
+			])
+		_story_list.text = "\n".join(lines)
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	_story_popup.size = _story_popup.custom_minimum_size
+	_story_popup.position = Vector2(
+		(vp.x - _story_popup.size.x) * 0.5, 56.0)
+	_story_popup.visible = true
+
+
+# Render an elapsed sim-time into a short "Xm" / "Xh Ym" string for the
+# left margin of each story line. Keeps the diary scannable rather than
+# raw-second timestamped.
+func _format_story_t(t: float) -> String:
+	var s: int = int(t)
+	if s < 60:
+		return "%ds" % s
+	if s < 3600:
+		@warning_ignore("integer_division")
+		return "%dm" % (s / 60)
+	@warning_ignore("integer_division")
+	var h: int = s / 3600
+	@warning_ignore("integer_division")
+	var m: int = (s % 3600) / 60
+	return "%dh %dm" % [h, m]
 
 
 # History popup. Single instance — reused across taps. Opens centered

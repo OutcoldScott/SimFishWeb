@@ -1724,6 +1724,17 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 		# Record startle heading so school-mates can copy it.
 		_startle_heading = dart_dir
 		_startle_remaining = 0.4
+		# Surface ripple — if the fish darts near the meniscus, the
+		# motion breaks surface tension and we spawn an expanding ring
+		# at the surface above its current position. Top-water schools
+		# (killifish, danios at preferred_y ≥ 4.5) trigger this often;
+		# bottom dwellers basically never. World caps via short ripple
+		# lifespan, no explicit pool.
+		if position.y > home_y * 0.85 and preferred_y >= 4.0 \
+				and sim != null and sim.has_method("get_parent"):
+			var w := sim.get_parent()
+			if w != null and w.has_method("spawn_burst_ripple"):
+				w.spawn_burst_ripple(position)
 
 	# HOVER / INVESTIGATE TRIGGER. Any fish might occasionally stop mid-water to
 	# look around. This breaks up the constant swimming and adds lifelike personality.

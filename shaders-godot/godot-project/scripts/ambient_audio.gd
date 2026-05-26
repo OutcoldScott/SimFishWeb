@@ -19,6 +19,13 @@ const PENTATONIC_HZ: Array[float] = [
 var _stream_player: AudioStreamPlayer = null
 var _playback: AudioStreamGeneratorPlayback = null
 var _pending: Array = []  # queue of (freq_hz, duration_s, amplitude) to play
+# Ambient auto-pulse — drops in occasional plinks even without explicit
+# events, with a rate that varies by day_phase. Daytime peaks at one
+# plink every ~3 sim seconds; midnight tapers to one every ~12 s. Pitch
+# also drifts higher at day, lower at night, so the soundscape literally
+# brightens with the lights.
+var _ambient_t: float = 0.0
+var _sim_ref: Node = null
 
 
 func _ready() -> void:
@@ -48,6 +55,35 @@ func play_event_plink(intensity: float = 0.5) -> void:
 func _process(_dt: float) -> void:
 	if _playback == null:
 		return
+	# Day/night ambient layer. Auto-trigger plinks at a rate that follows
+	# sim.daylight() — lots at midday, sparse at midnight — and bias the
+	# intensity (which the plink function maps to pitch) higher in the day.
+	# Lazily resolve the sim ref; main.tscn doesn't guarantee its position.
+	if _sim_ref == null:
+		_sim_ref = get_tree().current_scene.get_node_or_null(
+			"SubViewport/World/SimDriver")
+	if _sim_ref != null:
+		var daylight: float = 1.0
+		if _sim_ref.has_method("daylight"):
+			daylight = float(_sim_ref.daylight())
+		var sim_dt: float = _dt * float(_sim_ref.time_scale)
+		_ambient_t -= sim_dt
+		if _ambient_t <= 0.0:
+			# Next plink in 3-12 s depending on daylight (frequent at day,
+			# rare at night). Add ±30% jitter so the cadence doesn't
+			# feel mechanical.
+			var base_interval: float = lerpf(12.0, 3.0, daylight)
+			_ambient_t = base_interval * randf_range(0.7, 1.3)
+			# Intensity sets pitch via play_event_plink's scale-to-octave
+			# mapping. Bright daylight → higher notes; deep night → low.
+			play_event_plink(clampf(daylight * 0.85 + randf() * 0.2, 0.05, 0.95))
+	# Volume also dips at night so the day/night contrast is audible at
+	# whatever overall volume the player has set on their system.
+	if _sim_ref != null:
+		var dl_for_vol: float = 1.0
+		if _sim_ref.has_method("daylight"):
+			dl_for_vol = float(_sim_ref.daylight())
+		_stream_player.volume_db = lerpf(-14.0, -6.0, dl_for_vol)
 	# Service the audio buffer: synthesize as many samples as the generator
 	# is willing to accept this frame. We mix all pending plinks together.
 	var frames_available: int = _playback.get_frames_available()

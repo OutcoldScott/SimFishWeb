@@ -22,6 +22,13 @@ var algae_root: Node3D = null
 # white biofilm in the first 1-2 weeks of a new tank, then settles back
 # as bacteria balance out and shrimp / otos graze it.
 var _driftwood_voxels: Array[MeshInstance3D] = []
+# Glass mineral spots — tiny pale voxels that accumulate at the waterline
+# over time, mimicking the calcium / hard-water spots that real tanks
+# develop after a few weeks. Caps at MINERAL_SPOT_CAP so the glass
+# doesn't get fully encrusted.
+var _mineral_spots: Array[MeshInstance3D] = []
+var _mineral_progress_t: float = 0.0
+const MINERAL_SPOT_CAP: int = 35
 # Biofilm progress 0..1. Climbs slowly over the first few real-time
 # minutes, peaks around 0.65, then decays back toward a balanced level
 # as the "biofilm gets grazed" — the visible bloom-and-settle that all
@@ -233,6 +240,13 @@ func _ready() -> void:
 	_spawn_aeration_system()
 	_spawn_mulm_layer()
 	_spawn_surface_ripples()
+	# Tank heater — a small red rod tucked behind the substrate with a
+	# faint warm glow. Cheap visual cue that the tank is "running."
+	_build_heater()
+	# Room environment: desk + wall + lamp + books that the tank "sits on."
+	# Lifts the scene from "voxels in void" to "aquarium in a room." Defaults
+	# to "void" (no room) so existing tanks open unchanged.
+	_build_room_environment()
 	# Seed the microfauna swarm to roughly the steady-state target so the
 	# tank reads as "alive at small scale" from the first second instead of
 	# fading in over the first 30s. _process maintains the count from here.
@@ -270,6 +284,13 @@ func _process(dt: float) -> void:
 	# child_count + a handful of conditional spawns per ~1 s window).
 	_maintain_microfauna(sdt)
 	_maintain_wriggle_worms(sdt)
+	# Mineral spots on glass. One slow accumulator tick — every 20-40
+	# sim seconds we add a single pale voxel at the waterline on a
+	# random wall. Capped so the glass doesn't fully crust over.
+	_mineral_progress_t -= sdt
+	if _mineral_progress_t <= 0.0:
+		_mineral_progress_t = randf_range(20.0, 40.0)
+		_maybe_add_mineral_spot()
 	# Driftwood biofilm: rises over the first ~5 sim-minutes to ~0.65
 	# then very slowly decays as if grazed. We refresh the tints every
 	# 2 s rather than per-frame since the change is glacial.
@@ -1735,6 +1756,34 @@ func _add_floater_at(pos: Vector3) -> void:
 	_floaters.append(disk)
 
 
+# One-shot expanding ripple ring at the surface. Called by fish.gd when a
+# fish bursts near the meniscus (a startle dart that breaches the surface
+# tension). Voxel-styled: a thin flat box that scales outward via Tween
+# and fades. Cheap; we cap concurrent ripples informally via short
+# lifespan rather than an explicit pool.
+func spawn_burst_ripple(pos: Vector3) -> void:
+	var ring := MeshInstance3D.new()
+	ring.mesh = VoxelMat.get_box(Vector3(0.45, 0.04, 0.45))
+	ring.material_override = VoxelMat.make(Color8(225, 240, 245))
+	ring.position = Vector3(pos.x, WATER_HEIGHT - 0.04, pos.z)
+	add_child(ring)
+	var final_scale: Vector3 = Vector3(4.0, 0.6, 4.0)
+	var tw: Tween = create_tween().set_parallel(true)
+	tw.tween_property(ring, "scale", final_scale, 0.75) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	# Material albedo fade — duplicate first so we don't tint the shared
+	# cached material for every other ripple in the tank.
+	var fade_mat: ShaderMaterial = ring.material_override.duplicate() as ShaderMaterial
+	ring.material_override = fade_mat
+	var faded := Color8(225, 240, 245)
+	faded.a = 0.0
+	tw.tween_method(func(c: Color):
+			fade_mat.set_shader_parameter("albedo", c),
+		Color8(225, 240, 245), faded, 0.75) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_callback(ring.queue_free)
+
+
 func _spawn_surface_ripples() -> void:
 	# Sparse, slow ripples on the water surface - tiny pale voxels that
 	# appear briefly and fade. Cheap stand-in for proper surface-tension
@@ -2093,6 +2142,309 @@ func _spawn_surface_pop_emitter(parent: Node, pos: Vector3, bubble_lifetime: flo
 	rm.material = VoxelMat.make(Color8(220, 235, 240))
 	ring.draw_pass_1 = rm
 	parent.add_child(ring)
+
+
+# Add a single mineral spot at a random spot near the waterline on a
+# random wall. Real tanks develop these calcium / hard-water spots as
+# splash and evaporation deposit minerals. We just sprinkle pale voxels
+# at the meniscus over time so the glass visibly "ages."
+func _maybe_add_mineral_spot() -> void:
+	if _mineral_spots.size() >= MINERAL_SPOT_CAP:
+		return
+	var glass_root := get_node_or_null("Glass")
+	if glass_root == null:
+		return
+	# Pick a random wall and a position along it just below the waterline.
+	var wall_pick: int = randi() % 4
+	var x: float = 0.0
+	var z: float = 0.0
+	match wall_pick:
+		0:  # back wall
+			x = randf_range(-TANK_HALF_W + 0.5, TANK_HALF_W - 0.5)
+			z = -TANK_HALF_D + 0.04
+		1:  # front wall
+			x = randf_range(-TANK_HALF_W + 0.5, TANK_HALF_W - 0.5)
+			z = TANK_HALF_D - 0.04
+		2:  # left wall
+			x = -TANK_HALF_W + 0.04
+			z = randf_range(-TANK_HALF_D + 0.5, TANK_HALF_D - 0.5)
+		_:  # right wall
+			x = TANK_HALF_W - 0.04
+			z = randf_range(-TANK_HALF_D + 0.5, TANK_HALF_D - 0.5)
+	# Y just below the meniscus, with a small vertical jitter so the
+	# spots distribute as a smear along the waterline rather than a
+	# perfect line.
+	var y: float = WATER_HEIGHT - randf_range(0.04, 0.4)
+	var spot := MeshInstance3D.new()
+	spot.mesh = VoxelMat.get_box(Vector3(0.10, 0.06, 0.10))
+	spot.material_override = VoxelMat.make(Color8(225, 230, 235))
+	spot.position = Vector3(x, y, z)
+	glass_root.add_child(spot)
+	_mineral_spots.append(spot)
+
+
+# ---- Heater ----
+# Builds a small red voxel heater rod tucked at the back-right corner of
+# the tank with a faint warm OmniLight. Reads as "this tank is running"
+# — every glass-aquarium photo you see has a heater in it. Always built;
+# no preset switch (a heater is universal kit). Position is chosen so
+# the heater clears typical plant placement zones.
+func _build_heater() -> void:
+	var c := Node3D.new()
+	c.name = "Heater"
+	add_child(c)
+	var heater_x: float = TANK_HALF_W - 0.6
+	var heater_z: float = -TANK_HALF_D + 0.6
+	var heater_base_y: float = SUBSTRATE_DEPTH + 0.2
+	# Rod itself — thin black-glass column with a dull red core showing
+	# through. We approximate with two stacked voxel boxes (outer dark,
+	# inner red) since transparency in the voxel shader is heavy.
+	var rod_h: float = 1.8
+	var outer_mat: ShaderMaterial = VoxelMat.make(Color8(20, 20, 26))
+	var rod := MeshInstance3D.new()
+	rod.mesh = VoxelMat.get_box(Vector3(0.22, rod_h, 0.22))
+	rod.material_override = outer_mat
+	rod.position = Vector3(heater_x, heater_base_y + rod_h * 0.5, heater_z)
+	c.add_child(rod)
+	# Visible red filament strip running up the middle.
+	var core_mat: ShaderMaterial = VoxelMat.make(Color8(220, 70, 40))
+	var core := MeshInstance3D.new()
+	core.mesh = VoxelMat.get_box(Vector3(0.06, rod_h * 0.85, 0.06))
+	core.material_override = core_mat
+	core.position = Vector3(heater_x, heater_base_y + rod_h * 0.5, heater_z)
+	c.add_child(core)
+	# Top cap with the suction-cup mount marker.
+	var cap := MeshInstance3D.new()
+	cap.mesh = VoxelMat.get_box(Vector3(0.3, 0.12, 0.3))
+	cap.material_override = outer_mat
+	cap.position = Vector3(heater_x, heater_base_y + rod_h + 0.06, heater_z)
+	c.add_child(cap)
+	# Subtle warm glow. Tiny range so it doesn't bleed into the rest of
+	# the tank — just a hint of heat near the rod.
+	var glow := OmniLight3D.new()
+	glow.light_color = Color8(255, 120, 60)
+	glow.light_energy = 0.6
+	glow.omni_range = 1.4
+	glow.omni_attenuation = 2.4
+	glow.position = Vector3(heater_x, heater_base_y + rod_h * 0.5, heater_z)
+	c.add_child(glow)
+
+
+# ---- Room environment ----
+#
+# Builds optional geometry around the tank — wooden desk surface, back
+# wall, lamp, books, plant — based on TankConfig.environment_preset.
+# The default "void" preset is a no-op (preserves the classic isolated-
+# tank look). Other presets read their color palette from
+# TankConfig.ENVIRONMENT_PRESETS so swapping in new themes is just a
+# data change. Everything voxelizes through the same palette quantizer
+# as the tank so the room feels of-a-piece, not pasted on.
+func _build_room_environment() -> void:
+	var cfg := get_node_or_null("/root/TankConfig")
+	if cfg == null:
+		return
+	var preset_name: String = String(cfg.environment_preset)
+	if preset_name == "void" or preset_name == "":
+		return
+	var preset: Dictionary = cfg.current_environment_profile()
+	if preset.is_empty() or preset.get("label") == "Void (no room)":
+		return
+
+	var room := Node3D.new()
+	room.name = "RoomEnvironment"
+	add_child(room)
+
+	# Resolve colors. Each preset stores RGB int arrays we convert to Color8.
+	var desk_rgb: Array = preset.get("desk_color", [120, 90, 60])
+	var wall_rgb: Array = preset.get("wall_color", [200, 190, 175])
+	var accent_rgb: Array = preset.get("accent_color", [220, 165, 90])
+	var light_rgb: Array = preset.get("light_color", [255, 235, 200])
+	var desk_color: Color = Color8(desk_rgb[0], desk_rgb[1], desk_rgb[2])
+	var wall_color: Color = Color8(wall_rgb[0], wall_rgb[1], wall_rgb[2])
+	var accent_color: Color = Color8(accent_rgb[0], accent_rgb[1], accent_rgb[2])
+	var light_color: Color = Color8(light_rgb[0], light_rgb[1], light_rgb[2])
+	var desk_mat: ShaderMaterial = VoxelMat.make(desk_color)
+	var desk_dark_mat: ShaderMaterial = VoxelMat.make(desk_color.darkened(0.18))
+	var wall_mat: ShaderMaterial = VoxelMat.make(wall_color)
+	var accent_mat: ShaderMaterial = VoxelMat.make(accent_color)
+
+	# Desk surface. Three-ish-voxel-thick wooden slab the tank sits on,
+	# extending out from the tank footprint on all sides so the bottom of
+	# the glass reads as resting on a real surface, not levitating.
+	var desk_y: float = -0.6
+	var desk_half_w: float = TANK_HALF_W + 5.0
+	var desk_half_d: float = TANK_HALF_D + 4.0
+	var desk_thickness: float = 1.2
+	# Build the desk as a 2D grid of "plank" voxels with light grain.
+	# Each row alternates dark / light so the wood has a visible grain
+	# without a custom texture.
+	var plank_size: float = 0.7
+	var nx: int = int(desk_half_w * 2.0 / plank_size) + 1
+	var nz: int = int(desk_half_d * 2.0 / plank_size) + 1
+	for ix in nx:
+		for iz in nz:
+			var px: float = -desk_half_w + (float(ix) + 0.5) * plank_size
+			var pz: float = -desk_half_d + (float(iz) + 0.5) * plank_size
+			var grain: bool = (ix + iz) % 2 == 0
+			var mi := MeshInstance3D.new()
+			mi.mesh = VoxelMat.get_box(Vector3(plank_size * 0.96,
+				desk_thickness, plank_size * 0.96))
+			mi.material_override = desk_mat if grain else desk_dark_mat
+			mi.position = Vector3(px, desk_y - desk_thickness * 0.5, pz)
+			room.add_child(mi)
+	# Front lip of the desk: a slightly raised edge to suggest a real
+	# table edge in front of the camera.
+	for ix in nx:
+		var px2: float = -desk_half_w + (float(ix) + 0.5) * plank_size
+		var lip := MeshInstance3D.new()
+		lip.mesh = VoxelMat.get_box(Vector3(plank_size * 0.96, 0.12, 0.2))
+		lip.material_override = desk_dark_mat
+		lip.position = Vector3(px2, desk_y + 0.02, desk_half_d - 0.1)
+		room.add_child(lip)
+
+	# Back wall. Stands behind the tank, extending up past the camera's
+	# pitch range. Built as a flat grid of voxels for the same palette
+	# coherence as the desk.
+	var wall_z: float = -desk_half_d - 0.4
+	var wall_half_w: float = desk_half_w + 1.0
+	var wall_height: float = 16.0
+	var wall_y_min: float = desk_y - 1.0
+	var brick_h: float = 1.0
+	var brick_w: float = 1.5
+	var rows: int = int(wall_height / brick_h) + 1
+	var cols: int = int(wall_half_w * 2.0 / brick_w) + 1
+	for r in rows:
+		for col in cols:
+			var bx: float = -wall_half_w + (float(col) + 0.5) * brick_w
+			var by: float = wall_y_min + (float(r) + 0.5) * brick_h
+			var subtle: bool = ((r * 3 + col) % 5) == 0
+			var brick := MeshInstance3D.new()
+			brick.mesh = VoxelMat.get_box(Vector3(brick_w * 0.96, brick_h * 0.96, 0.4))
+			brick.material_override = accent_mat if subtle else wall_mat
+			brick.position = Vector3(bx, by, wall_z)
+			room.add_child(brick)
+
+	# Soft warm room light from the side — simulates a window or lamp.
+	# Energy is low (0.18) so it doesn't blow out the tank's own fixture.
+	var room_light := OmniLight3D.new()
+	room_light.light_color = light_color
+	room_light.light_energy = 0.18
+	room_light.omni_range = 36.0
+	room_light.omni_attenuation = 1.6
+	room_light.position = Vector3(desk_half_w + 2.0, desk_y + 6.0, wall_z + 4.0)
+	room.add_child(room_light)
+
+	# Lamp (preset-controlled). Tall thin stand + a glowing shade on the
+	# left side of the desk, just outside the tank's footprint.
+	if bool(preset.get("include_lamp", false)):
+		_build_room_lamp(room, Vector3(-desk_half_w + 2.0, desk_y, -desk_half_d + 1.6),
+			accent_color, light_color)
+
+	# Book stack on the right side of the desk.
+	if bool(preset.get("include_books", false)):
+		_build_room_books(room, Vector3(desk_half_w - 2.4, desk_y + 0.05,
+			-desk_half_d + 1.4))
+
+	# Small house plant in front of the wall, to one side.
+	if bool(preset.get("include_plant", false)):
+		_build_room_plant(room, Vector3(-desk_half_w + 2.0, desk_y + 0.05,
+			-desk_half_d + 2.6))
+
+
+func _build_room_lamp(parent: Node3D, base_pos: Vector3,
+		accent: Color, light_col: Color) -> void:
+	var stand_mat: ShaderMaterial = VoxelMat.make(Color8(45, 40, 38))
+	var shade_mat: ShaderMaterial = VoxelMat.make(accent.lightened(0.15))
+	# Base disc.
+	var base := MeshInstance3D.new()
+	base.mesh = VoxelMat.get_box(Vector3(0.6, 0.12, 0.6))
+	base.material_override = stand_mat
+	base.position = base_pos + Vector3(0, 0.06, 0)
+	parent.add_child(base)
+	# Stem.
+	var stem := MeshInstance3D.new()
+	stem.mesh = VoxelMat.get_box(Vector3(0.16, 2.2, 0.16))
+	stem.material_override = stand_mat
+	stem.position = base_pos + Vector3(0, 1.2, 0)
+	parent.add_child(stem)
+	# Shade (slightly conical via two stacked boxes — voxel-aesthetic friendly).
+	var shade_bottom := MeshInstance3D.new()
+	shade_bottom.mesh = VoxelMat.get_box(Vector3(0.95, 0.35, 0.95))
+	shade_bottom.material_override = shade_mat
+	shade_bottom.position = base_pos + Vector3(0, 2.45, 0)
+	parent.add_child(shade_bottom)
+	var shade_top := MeshInstance3D.new()
+	shade_top.mesh = VoxelMat.get_box(Vector3(0.7, 0.25, 0.7))
+	shade_top.material_override = shade_mat
+	shade_top.position = base_pos + Vector3(0, 2.78, 0)
+	parent.add_child(shade_top)
+	# Lamp light — small omni for the warm pool of light at the base.
+	var lamp_light := OmniLight3D.new()
+	lamp_light.light_color = light_col
+	lamp_light.light_energy = 0.25
+	lamp_light.omni_range = 8.0
+	lamp_light.omni_attenuation = 2.4
+	lamp_light.position = base_pos + Vector3(0, 2.55, 0)
+	parent.add_child(lamp_light)
+
+
+func _build_room_books(parent: Node3D, base_pos: Vector3) -> void:
+	# A short stack of 3-4 voxel "books," each a different palette color.
+	var colors := [
+		Color8(140, 70, 80),   # dusty red
+		Color8(80, 100, 130),  # blue-gray
+		Color8(180, 140, 80),  # tan
+		Color8(70, 90, 70),    # forest green
+	]
+	var n: int = randi_range(3, 4)
+	var y: float = base_pos.y
+	for i in n:
+		var col: Color = colors[i % colors.size()]
+		var w: float = randf_range(0.7, 1.0)
+		var h: float = randf_range(0.28, 0.4)
+		var d: float = randf_range(0.55, 0.7)
+		var b := MeshInstance3D.new()
+		b.mesh = VoxelMat.get_box(Vector3(w, h, d))
+		b.material_override = VoxelMat.make(col)
+		# Slight per-book offset so the stack isn't a ruler-straight column.
+		b.position = base_pos + Vector3(randf_range(-0.04, 0.04),
+			y - base_pos.y + h * 0.5, randf_range(-0.06, 0.06))
+		b.rotation.y = randf_range(-0.06, 0.06)
+		parent.add_child(b)
+		y += h
+
+
+func _build_room_plant(parent: Node3D, base_pos: Vector3) -> void:
+	# A small terracotta pot with a clump of dark-green voxel leaves on top.
+	var pot_mat: ShaderMaterial = VoxelMat.make(Color8(170, 90, 65))
+	var pot := MeshInstance3D.new()
+	pot.mesh = VoxelMat.get_box(Vector3(0.85, 0.6, 0.85))
+	pot.material_override = pot_mat
+	pot.position = base_pos + Vector3(0, 0.3, 0)
+	parent.add_child(pot)
+	# Soil top — thin dark band at the rim.
+	var soil := MeshInstance3D.new()
+	soil.mesh = VoxelMat.get_box(Vector3(0.7, 0.08, 0.7))
+	soil.material_override = VoxelMat.make(Color8(40, 30, 24))
+	soil.position = base_pos + Vector3(0, 0.62, 0)
+	parent.add_child(soil)
+	# Leaves — half a dozen short voxel clusters in a fan.
+	var leaf_mats := [
+		VoxelMat.make(Color8(64, 110, 60)),
+		VoxelMat.make(Color8(48, 90, 50)),
+		VoxelMat.make(Color8(80, 130, 72)),
+	]
+	for i in 7:
+		var ang: float = float(i) / 7.0 * TAU
+		var lean_x: float = cos(ang) * 0.18
+		var lean_z: float = sin(ang) * 0.18
+		var height: float = randf_range(0.5, 0.95)
+		var leaf := MeshInstance3D.new()
+		leaf.mesh = VoxelMat.get_box(Vector3(0.18, height, 0.12))
+		leaf.material_override = leaf_mats[i % leaf_mats.size()]
+		leaf.position = base_pos + Vector3(lean_x, 0.65 + height * 0.5, lean_z)
+		leaf.rotation = Vector3(cos(ang) * 0.4, ang, sin(ang) * 0.4)
+		parent.add_child(leaf)
 
 
 func _spawn_mulm_layer() -> void:

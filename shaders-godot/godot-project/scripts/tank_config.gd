@@ -91,6 +91,70 @@ var light_size: float = 0.75
 # Users can re-enable via Settings panel.
 var light_volumetric: bool = false
 
+# ---- Room environment ----
+# A "scene" around the tank — desk, wall, lamp, props. Lifts the tank
+# from floating-in-void to "sitting in a room." Defaults to "void"
+# (the classic look) so existing tanks open unchanged. Each preset's
+# colors are chosen from the palette so the room quantizes cleanly
+# alongside the tank.
+var environment_preset: String = "void"
+
+const ENVIRONMENT_PRESETS: Dictionary = {
+	"void": {
+		"label": "Void (no room)",
+		"description": "Classic isolated tank floating in dark. No table, no walls, no props.",
+	},
+	"bedroom_desk": {
+		"label": "Bedroom desk",
+		"description": "Warm wooden desk + plaster back wall + a small bedside lamp. Cozy nighttime feel.",
+		"desk_color": [128, 88, 56],
+		"wall_color": [212, 200, 178],
+		"accent_color": [220, 165, 90],
+		"light_color": [255, 235, 200],
+		"include_lamp": true,
+		"include_books": true,
+		"include_plant": true,
+	},
+	"sunny_window": {
+		"label": "Sunny window",
+		"description": "Pale wood ledge + bright daylight from a virtual window. Crisp daytime feel.",
+		"desk_color": [200, 175, 142],
+		"wall_color": [232, 224, 208],
+		"accent_color": [200, 220, 240],
+		"light_color": [255, 248, 232],
+		"include_lamp": false,
+		"include_books": true,
+		"include_plant": true,
+	},
+	"dark_cabinet": {
+		"label": "Dark cabinet",
+		"description": "Black-walnut cabinet with cool fluorescent fill. Aquarium-shop / display feel.",
+		"desk_color": [56, 40, 32],
+		"wall_color": [42, 38, 44],
+		"accent_color": [110, 130, 140],
+		"light_color": [220, 232, 240],
+		"include_lamp": false,
+		"include_books": false,
+		"include_plant": false,
+	},
+	"forest_window": {
+		"label": "Forest window",
+		"description": "Mossy log shelf + cool green light filtered through trees outside. Quiet, plant-forward.",
+		"desk_color": [88, 76, 60],
+		"wall_color": [128, 148, 120],
+		"accent_color": [130, 170, 110],
+		"light_color": [220, 240, 215],
+		"include_lamp": false,
+		"include_books": false,
+		"include_plant": true,
+	},
+}
+
+
+func current_environment_profile() -> Dictionary:
+	return ENVIRONMENT_PRESETS.get(environment_preset, ENVIRONMENT_PRESETS["void"])
+
+
 # ---- Fauna ----
 # If true, respawn 10 of each creature if the tank is empty.
 var auto_respawn_fauna: bool = false
@@ -714,6 +778,7 @@ func save_to_disk() -> void:
 	cfg.set_value("light", "height", light_height)
 	cfg.set_value("light", "size", light_size)
 	cfg.set_value("light", "volumetric", light_volumetric)
+	cfg.set_value("environment", "preset", environment_preset)
 	cfg.set_value("substrate", "type", substrate_type)
 	cfg.set_value("aeration", "type", aeration_type)
 	cfg.set_value("aeration", "strength", aeration_strength)
@@ -769,6 +834,7 @@ func load_from_disk() -> void:
 	light_height = cfg.get_value("light", "height", light_height)
 	light_size = cfg.get_value("light", "size", light_size)
 	light_volumetric = cfg.get_value("light", "volumetric", light_volumetric)
+	environment_preset = cfg.get_value("environment", "preset", environment_preset)
 	substrate_type = cfg.get_value("substrate", "type", substrate_type)
 	aeration_type = cfg.get_value("aeration", "type", aeration_type)
 	aeration_strength = cfg.get_value("aeration", "strength", aeration_strength)
@@ -843,6 +909,7 @@ func reset_to_defaults() -> void:
 	light_height = 1.4
 	light_size = 0.75
 	light_volumetric = false
+	environment_preset = "void"
 	# Fauna behavior.
 	auto_respawn_fauna = false
 	auto_feed_fauna = false
