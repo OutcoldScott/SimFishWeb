@@ -88,6 +88,13 @@ var light_height: float = 1.4
 var light_size: float = 0.75
 # Show volumetric beams (god rays). On by default for high-fidelity startup experience.
 var light_volumetric: bool = true
+# Show surface caustics scrolling across the substrate. On by default.
+var light_caustics: bool = true
+
+# Procedural music settings.
+var music_enabled: bool = true
+var music_volume: float = 0.7
+var music_complexity: float = 0.5
 
 # ---- Room environment ----
 # A "scene" around the tank — desk, wall, lamp, props. Lifts the tank
@@ -779,6 +786,10 @@ func save_to_disk() -> void:
 	cfg.set_value("light", "height", light_height)
 	cfg.set_value("light", "size", light_size)
 	cfg.set_value("light", "volumetric", light_volumetric)
+	cfg.set_value("light", "caustics", light_caustics)
+	cfg.set_value("music", "enabled", music_enabled)
+	cfg.set_value("music", "volume", music_volume)
+	cfg.set_value("music", "complexity", music_complexity)
 	cfg.set_value("environment", "preset", environment_preset)
 	cfg.set_value("substrate", "type", substrate_type)
 	cfg.set_value("aeration", "type", aeration_type)
@@ -835,6 +846,10 @@ func load_from_disk() -> void:
 	light_height = cfg.get_value("light", "height", light_height)
 	light_size = cfg.get_value("light", "size", light_size)
 	light_volumetric = cfg.get_value("light", "volumetric", light_volumetric)
+	light_caustics = cfg.get_value("light", "caustics", light_caustics)
+	music_enabled = cfg.get_value("music", "enabled", music_enabled)
+	music_volume = cfg.get_value("music", "volume", music_volume)
+	music_complexity = cfg.get_value("music", "complexity", music_complexity)
 	environment_preset = cfg.get_value("environment", "preset", environment_preset)
 	substrate_type = cfg.get_value("substrate", "type", substrate_type)
 	aeration_type = cfg.get_value("aeration", "type", aeration_type)
@@ -910,6 +925,10 @@ func reset_to_defaults() -> void:
 	light_height = 1.4
 	light_size = 0.75
 	light_volumetric = true
+	light_caustics = true
+	music_enabled = true
+	music_volume = 0.7
+	music_complexity = 0.5
 	environment_preset = "void"
 	# Fauna behavior.
 	auto_respawn_fauna = false

@@ -256,6 +256,11 @@ const GESTATION_DURATION: float = 25.0  # sim seconds of visible pregnancy
 # brooding mode after laying eggs, even if they aren't "hover" pattern.
 var guards_clutch: bool = false
 
+# Sterile flag (genome-driven). When true, any offspring produced by this
+# fish are marked non-viable (eggs dissolve instead of hatching). Used for
+# hybrid crosses and genetic realism.
+var sterile: bool = false
+
 # Egg-guarding / brooding state. Set on both parents post-spawn for
 # pair-bonding species (currently swim_pattern == "hover": angelfish).
 # While brooding_remaining > 0 the fish hovers near brooding_at and
@@ -281,6 +286,16 @@ var _courtship_sync: bool = false
 # Independent phase for courtship body pulses so the "puff up" shimmer
 # isn't locked to the swim-tail wag rhythm.
 var _courtship_pulse_phase: float = 0.0
+# Courtship intensity ramp (0.0 → 1.0 over COURT_DURATION). Drives the
+# gradual ramping of S-curve dance amplitude, fin flare, and color
+# saturation boost so the courtship BUILDS to a flash at the spawn moment
+# rather than being an on/off display.
+var _courtship_intensity: float = 0.0
+var _courtship_color_active: bool = false
+# Pheromone trail: GPUParticles3D that trails a receptive female to
+# visually signal she's in heat. Created on demand, freed when she's
+# no longer receptive.
+var _pheromone_trail: GPUParticles3D = null
 # Aerial respiration: cories + loaches periodically dart to the surface to
 # gulp atmospheric air, then sink back to the substrate. Real Walstad
 # behavior - it's a stress signal in healthy tanks but routine in any
@@ -473,6 +488,7 @@ func init_genome(genome: Dictionary) -> void:
 	armor_plates = bool(genome.get("armor_plates", armor_plates))
 	is_livebearer = bool(genome.get("is_livebearer", is_livebearer))
 	guards_clutch = bool(genome.get("guards_clutch", guards_clutch))
+	sterile = bool(genome.get("sterile", sterile))
 	anal_fin_length_factor = float(genome.get("anal_fin_length_factor",
 		anal_fin_length_factor))
 	adipose_fin = bool(genome.get("adipose_fin", adipose_fin))
@@ -1303,6 +1319,7 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			court_timer = 0.0
 			_courtship_flare = false
 			_courtship_sync = false
+			_courtship_intensity = 0.0
 		else:
 			current_mode = Mode.COURT
 			var to_partner: Vector3 = partner.position - position
@@ -1310,6 +1327,11 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			# Swim alongside (not into) the partner: target a point slightly to one side.
 			var side: Vector3 = to_partner.cross(Vector3.UP).normalized() * 0.4
 			var courtship_target: Vector3 = partner.position + side
+			# Courtship intensity ramp: builds from 0 to 1 over the full
+			# COURT_DURATION. Drives the gradual acceleration of the S-curve
+			# dance, fin flare, and color saturation boost so the display
+			# crescendos toward the spawn flash.
+			_courtship_intensity = clampf(court_timer / COURT_DURATION, 0.0, 1.0)
 			# MALE COURTING DISPLAY. Real male guppies + bettas parade
 			# alongside the female in a tight S-curve, flaring their tail
 			# fins to maximum spread. We simulate this by adding a
@@ -1317,9 +1339,12 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 			# close enough to display, scaled by the courtship sequence
 			# duration so the dance accelerates as the spawn approaches.
 			if sex == 0 and dist < 1.8:
-				var t_phase: float = court_timer * 4.5
+				# Phase speed ramps from 3.0 → 6.0 as intensity builds.
+				var t_phase: float = court_timer * lerpf(3.0, 6.0, _courtship_intensity)
+				# S-curve amplitude ramps from 0.15 → 0.45.
+				var s_amp: float = lerpf(0.15, 0.45, _courtship_intensity)
 				var s_offset: Vector3 = to_partner.cross(Vector3.UP).normalized() \
-					* sin(t_phase) * 0.35
+					* sin(t_phase) * s_amp
 				desired += (courtship_target + s_offset - position).normalized() \
 					* effective_max * 0.85
 				# Mark the renderer flag - _apply_render() uses it to flare the
@@ -1370,6 +1395,7 @@ func tick(dt: float, neighbors: Array, plants: Array, algae_array: Array, waste:
 				court_timer = 0.0
 				_courtship_flare = false
 				_courtship_sync = false
+				_courtship_intensity = 0.0
 			target_velocity = desired.limit_length(effective_max)
 			return events
 
@@ -2003,6 +2029,8 @@ func _process(dt: float) -> void:
 		if dt <= 0.0:
 			return  # paused
 
+	_update_pheromone_trail()
+
 	# Apply pregnancy bulge if gestating
 	if _body_mid_pivot != null:
 		if is_livebearer and sex == 1 and _gestation_progress > 0.0:
@@ -2227,11 +2255,13 @@ func _motion_substep(dt: float) -> void:
 	var wag_amp_extra: float = 0.0
 	var pec_amp_extra: float = 0.0
 	if _courtship_flare:
-		wag_freq *= 1.4
-		wag_amp_extra = 0.25
+		wag_freq *= 1.0 + _courtship_intensity * 0.5
+		# Wag and pec amplitudes ramp with courtship intensity so the
+		# display crescendos from a subtle shimmy to a dramatic flare.
+		wag_amp_extra = 0.10 + _courtship_intensity * 0.25
 		# Pectoral fins flare wider during display - real courting fish
 		# spread their pec fins maximally to look bigger / fitter.
-		pec_amp_extra = 0.30
+		pec_amp_extra = 0.10 + _courtship_intensity * 0.30
 	# Pre-spawn sync window: both fish puff up + flare in unison the
 	# beat before egg drop. Drives the body pulse and a brief extra
 	# pec spread so the spawn moment reads as a flash.
@@ -2348,14 +2378,15 @@ func _motion_substep(dt: float) -> void:
 	# Subtle scale shimmy that reads as "puffing up" during display.
 	# Independent of swim_phase so the pulse doesn't lock to the tail
 	# wag. Stronger for males during display, biggest during the sync
-	# window. Returns the bank pivot to unit scale when no display
-	# is active so non-courting fish stay clean.
+	# window. Amplitude now scales with _courtship_intensity so the
+	# puffing builds gradually toward the spawn flash.
 	if _bank_pivot != null:
 		var display_amp: float = 0.0
 		if _courtship_flare:
-			display_amp = 0.05 if sex == 0 else 0.025
+			var base_amp: float = 0.03 if sex == 0 else 0.015
+			display_amp = base_amp + _courtship_intensity * (0.05 if sex == 0 else 0.025)
 		if _courtship_sync:
-			display_amp += 0.06
+			display_amp += 0.08
 		if display_amp > 0.0:
 			_courtship_pulse_phase += dt * 7.0
 			var pulse: float = 1.0 + sin(_courtship_pulse_phase) * display_amp
@@ -2366,6 +2397,48 @@ func _motion_substep(dt: float) -> void:
 			# Ease back to normal scale when not displaying.
 			_bank_pivot.scale = _bank_pivot.scale.lerp(Vector3.ONE,
 				clampf(dt * 6.0, 0.0, 1.0))
+
+	# ---- Courtship color saturation boost ----
+	# Males get progressively more vivid as courtship intensity builds.
+	# This is the "color pulse" from GOALS.md #11 — the fish visibly
+	# brightens from "interested" to "climax flash" at spawn. Applied
+	# by temporarily saturating the shader albedo on all mesh children.
+	if _courtship_flare and sex == 0 and _courtship_intensity > 0.05:
+		var sat_boost: float = _courtship_intensity * 0.30
+		if _courtship_sync:
+			sat_boost = 0.45
+
+		# Ensure we duplicate materials before modifying their parameters,
+		# otherwise we modify cached shared materials!
+		if not _courtship_color_active:
+			_courtship_color_active = true
+			for child in _all_meshes(self):
+				var mi: MeshInstance3D = child
+				var m: Material = mi.material_override
+				if m is ShaderMaterial:
+					if not mi.has_meta("orig_mat"):
+						mi.set_meta("orig_mat", m)
+					mi.material_override = m.duplicate()
+
+		for child in _all_meshes(self):
+			var mi: MeshInstance3D = child
+			if mi.has_meta("orig_mat"):
+				var orig_mat = mi.get_meta("orig_mat")
+				if orig_mat is ShaderMaterial:
+					var orig_color: Color = orig_mat.get_shader_parameter("albedo")
+					var vivid: Color = orig_color.lightened(sat_boost * 0.3)
+					vivid.s = minf(1.0, vivid.s + sat_boost)
+					(mi.material_override as ShaderMaterial).set_shader_parameter("albedo", vivid)
+	elif _courtship_color_active:
+		# Restore original colors when courtship ends
+		_courtship_color_active = false
+		for child in _all_meshes(self):
+			var mi: MeshInstance3D = child
+			if mi.has_meta("orig_mat"):
+				var orig = mi.get_meta("orig_mat")
+				if orig != null:
+					mi.material_override = orig
+				mi.remove_meta("orig_mat")
 
 
 func _update_maturity() -> void:
@@ -2749,6 +2822,8 @@ func produce_offspring_genome(partner: Fish) -> Dictionary:
 		# Livebearer trait is species-locked too - inherited identically.
 		"is_livebearer": is_livebearer,
 		"guards_clutch": guards_clutch,
+		"sterile": sterile or partner.sterile or (randf() < 0.01),
+		"viable": not (sterile or partner.sterile or (species != partner.species) or (randf() < 0.03)),
 		# Silhouette traits. anal_fin_length_factor drifts continuously like
 		# fin_length_factor; the booleans + body_shape are species-locked
 		# (no realistic mutation path on a 4-5 generation timescale).
@@ -2871,3 +2946,56 @@ func resolve_refs(saved: Dictionary, id_map: Dictionary) -> void:
 		var p: Node = id_map[pid]
 		if p is Fish and is_instance_valid(p):
 			partner = p
+
+
+func _update_pheromone_trail() -> void:
+	var is_receptive: bool = (
+		maturity == MATURITY_ADULT
+		and sex == 1
+		and breed_cooldown <= 0.0
+		and hunger < 0.5
+		and energy > 0.65
+		and stress < 0.4
+		and partner == null
+		and not _dying
+	)
+
+	if is_receptive:
+		if _pheromone_trail == null:
+			_pheromone_trail = GPUParticles3D.new()
+			_pheromone_trail.amount = 8
+			_pheromone_trail.lifetime = 2.5
+			_pheromone_trail.local_coords = false
+
+			var proc_mat := ParticleProcessMaterial.new()
+			proc_mat.gravity = Vector3(0, -0.05, 0)
+			proc_mat.direction = Vector3.ZERO
+			proc_mat.spread = 180.0
+			proc_mat.initial_velocity_min = 0.02
+			proc_mat.initial_velocity_max = 0.1
+			proc_mat.scale_min = 0.3
+			proc_mat.scale_max = 0.8
+			proc_mat.color = Color(1.0, 0.8, 0.65, 0.25)
+
+			_pheromone_trail.process_material = proc_mat
+
+			var quad := QuadMesh.new()
+			quad.size = Vector2(0.06, 0.06)
+
+			var mat := StandardMaterial3D.new()
+			mat.shading_mode = StandardMaterial3D.SHADING_MODE_UNSHADED
+			mat.transparency = StandardMaterial3D.TRANSPARENCY_ALPHA
+			mat.use_particle_colors = true
+			mat.billboard_mode = StandardMaterial3D.BILLBOARD_PARTICLES
+
+			quad.material = mat
+			_pheromone_trail.draw_passes = 1
+			_pheromone_trail.set_draw_pass_mesh(0, quad)
+
+			_pheromone_trail.position = Vector3(0, 0, 0.3)
+			add_child(_pheromone_trail)
+			_pheromone_trail.emitting = true
+	else:
+		if _pheromone_trail != null:
+			_pheromone_trail.queue_free()
+			_pheromone_trail = null

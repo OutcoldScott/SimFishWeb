@@ -36,14 +36,14 @@ between "voxels swimming around" and "creatures alive in a tank."
 The reproduction loop is the heart of an ecosystem sim. Each visible step
 sells the "this is alive" feeling.
 
-- [ ] **11. Intensifying courtship display.** Color pulse + fin spread ramps over the courtship window so the spawn moment reads as a flash. Some of this exists; needs tuning. *Effort: M · Impact: M*
+- [x] **11. Intensifying courtship display.** Color pulse + fin spread ramps over the courtship window so the spawn moment reads as a flash. Some of this exists; needs tuning. *Effort: M · Impact: M*
 - [ ] **12. Mouthbrooder egg-carry.** Selected cichlid-likes carry visible eggs in the throat for the incubation period. *Effort: L · Impact: M*
 - [x] **13. Fry-in-plants shoaling.** Fresh fry seek the densest plant patch and shoal there until juvenile. *Effort: M · Impact: L*
 - [x] **14. Adult coloration deepening with age.** Juveniles slightly desaturated, adults full vivid. Currently jumps; should be gradual. *Effort: S · Impact: M*
 - [x] **15. Live-bearer pregnancy bulge.** Guppy females visibly grow rounder before birth. Already partly modeled; needs animation curve. *Effort: S · Impact: M*
-- [ ] **16. Sterile / hybrid genetic flag.** Some crossed pairs produce non-viable eggs that simply don't hatch — adds genetic realism. *Effort: M · Impact: S*
+- [x] **16. Sterile / hybrid genetic flag.** Some crossed pairs produce non-viable eggs that simply don't hatch — adds genetic realism. *Effort: M · Impact: S*
 - [x] **17. Parental clutch guarding.** Egg-laying species defend their eggs from passing fish for the incubation window. *Effort: M · Impact: L*
-- [ ] **18. Pheromone trails during heat.** Subtle particle trail from a receptive female that nearby males can follow. *Effort: M · Impact: M*
+- [x] **18. Pheromone trails during heat.** Subtle particle trail from a receptive female that nearby males can follow. *Effort: M · Impact: M*
 - [x] **19. Species-tinted egg color.** Eggs currently look identical; tinting them per-species sells the variety. *Effort: S · Impact: S*
 - [ ] **20. Per-species mating dance.** Each species gets a distinct courtship choreography (spiral, parade, vertical bob, parallel cruise). *Effort: L · Impact: L*
 
@@ -85,7 +85,7 @@ The medium itself — water, light, surface, sound — sells the immersion.
 - [x] **41. Surface ripples from fish darts.** A fast direction change near the surface produces a small expanding ring. *Effort: M · Impact: L* — `world.spawn_burst_ripple(pos)` tweens a flat voxel ring outward + fades its albedo via duplicated material. Fish.gd calls it from the auto-dart branch when the fish is a top-water species (`preferred_y ≥ 4.0`) and bursting near its home Y.
 - [x] **42. Visible current particles.** Subtle dust motes drifting along the flow vectors from the filter return. *Effort: M · Impact: M* — already implemented: `world._emit_filter_outflow()` (called from `_build_filter_aerator`) emits a 14-particle GPUParticles3D jet of small pale spheres from the spout end, with downward-out direction + buoyancy gravity, so the stream curves into the tank then rises.
 - [x] **43. Mineral spots on glass.** Over hours, faint white speckle appears on glass at the waterline. *Effort: M · Impact: S* — `world._maybe_add_mineral_spot()` ticked from `_process` every 20-40 sim seconds. Picks a random wall + waterline-adjacent Y and sprinkles a tiny pale voxel. Capped at MINERAL_SPOT_CAP (35) so the glass ages visibly without ever fully crusting over.
-- [ ] **44. Surface caustics.** Light pattern scrolling across the substrate, sourced from a wavy surface mesh. *Effort: L · Impact: L* — deferred (needs a new shader / surface mesh).
+- [x] **44. Surface caustics.** Light pattern scrolling across the substrate, sourced from a wavy surface mesh. *Effort: L · Impact: L* — procedural dual-Voronoi next-pass shader.
 - [x] **45. Day/night ambient audio crossfade.** Morning birds, midday quiet, evening cricket / cicada layer through the speakers behind the tank. *Effort: M · Impact: L* — `ambient_audio.gd` now auto-triggers plinks at an interval that scales with `sim.daylight()` (3 s at midday → 12 s at midnight) and biases the pentatonic pitch higher in the day. The player's `volume_db` also lerps from -14 dB (midnight) to -6 dB (midday) so the day/night contrast reads as audible amplitude as well as cadence.
 - [x] **46. Heater glow.** A small visible heater rod with a faint warm light pulse. *Effort: S · Impact: S* — `world._build_heater()` drops a thin black-glass rod with a visible red filament strip at the back-right corner of the substrate, plus an OmniLight3D (warm orange, 1.4 unit range) so the rod genuinely glows in the corner.
 - [x] **47. Tank-condition mood indicator.** A subtle UI chip showing tank "vibe" — Thriving / Cycling / Stressed / Crashing — based on aggregate metrics. *Effort: M · Impact: M* — new "mood" chip in the top HUD. Aggregates `0.3 × O₂ + 0.3 × biomass-normalized + 0.2 × (1 - algae) + 0.2 × (1 - waste)` and maps to 🙂 thriving / 😌 ok / 😟 stressed / 🚨 crashing.

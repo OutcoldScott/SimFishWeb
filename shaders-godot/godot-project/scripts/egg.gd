@@ -20,11 +20,13 @@ var _wobble_pivot: Node3D = null
 # when the genome carries no base_color.
 var _egg_tint: Color = Color8(240, 215, 160)
 var _egg_tint_alt: Color = Color8(220, 190, 130)
+var viable: bool = true
 
 
 func init(genome_dict: Dictionary) -> void:
 	genome = genome_dict
 	species = genome.get("species", species)
+	viable = bool(genome.get("viable", true))
 	# Derive egg tint from the parents' base_color: lighten by 40% and
 	# desaturate toward a warm translucent look so the species identity
 	# shows through. E.g. scarlet glassdart → pink-ish eggs.
@@ -34,6 +36,12 @@ func init(genome_dict: Dictionary) -> void:
 		var light: Color = c.lightened(0.45)
 		_egg_tint = light.lerp(Color8(240, 215, 160), 0.35)
 		_egg_tint_alt = light.lerp(Color8(220, 190, 130), 0.40)
+	
+	if not viable:
+		_egg_tint = _egg_tint.lerp(Color(0.85, 0.85, 0.85), 0.5)
+		_egg_tint.a = 0.45
+		_egg_tint_alt = _egg_tint_alt.lerp(Color(0.80, 0.80, 0.80), 0.5)
+		_egg_tint_alt.a = 0.45
 	_build_visual()
 
 
@@ -93,3 +101,23 @@ func tick(dt: float) -> bool:
 
 func is_ready_to_hatch() -> bool:
 	return _age >= INCUBATION_S
+
+
+func dissolve() -> void:
+	var tween := create_tween()
+	tween.set_parallel(true)
+	# Shrink the eggs.
+	tween.tween_property(self, "scale", Vector3.ZERO, 3.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	# Fade out each mesh's material override.
+	for child in _wobble_pivot.get_children():
+		if child is MeshInstance3D:
+			var mat: Material = child.material_override
+			if mat is ShaderMaterial:
+				# Duplicate so we don't fade the cached material
+				var d_mat: ShaderMaterial = mat.duplicate()
+				child.material_override = d_mat
+				var orig_color: Color = d_mat.get_shader_parameter("albedo")
+				var target_color := Color(orig_color.r, orig_color.g, orig_color.b, 0.0)
+				tween.tween_property(d_mat, "shader_parameter/albedo", target_color, 3.0)
+	tween.set_parallel(false)
+	tween.tween_callback(queue_free)

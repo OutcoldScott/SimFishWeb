@@ -75,6 +75,7 @@ var _accum: float = 0.0
 var _stats_timer: float = 0.0
 var _extinction_timer: float = 0.0
 var _auto_feed_timer: float = 0.0
+var _has_logged_sterile_dissolve: bool = false
 
 # ---- Save/load: stable per-entity IDs ----
 # instance_id() is not stable across sessions, so anything that needs a
@@ -285,12 +286,23 @@ func _tick(dt: float) -> void:
 
 	# 6. Eggs - tick incubation, hatch when ready.
 	var hatched: Array[FishEgg] = []
+	var non_viable: Array[FishEgg] = []
 	for e in eggs:
 		if e.tick(dt):
-			hatched.append(e)
+			if e.viable:
+				hatched.append(e)
+			else:
+				non_viable.append(e)
 	for e in hatched:
 		_hatch(e)
+		eggs.erase(e)
 		e.queue_free()
+	for e in non_viable:
+		eggs.erase(e)
+		e.dissolve()
+		if not _has_logged_sterile_dissolve:
+			_has_logged_sterile_dissolve = true
+			log_story_event("Non-viable eggs dissolved — genetic incompatibility")
 
 	# 6a. Auto-Respawn Fauna if completely empty
 	var cfg = get_node_or_null("/root/TankConfig")
@@ -479,6 +491,7 @@ func _tick(dt: float) -> void:
 			var w: WasteParticle = ev["eat_waste"]
 			if is_instance_valid(w) and not consumed.has(w):
 				consumed[w] = true
+				_play_ambient_event("eat")
 				var leftover: float = w.nutrient_value * 0.4
 				waste.erase(w)
 				w.queue_free()
@@ -494,6 +507,10 @@ func _tick(dt: float) -> void:
 			var prey: Node = ev["kill_prey"]
 			if is_instance_valid(prey) and not consumed.has(prey):
 				consumed[prey] = true
+				if prey is Fish or prey is Shrimp:
+					_play_ambient_event("death")
+				else:
+					_play_ambient_event("eat")
 				if prey is Fish:
 					fish.erase(prey)
 				elif prey is Shrimp:
@@ -510,6 +527,7 @@ func _tick(dt: float) -> void:
 			var snail: Node = ev["kill_snail"]
 			if is_instance_valid(snail) and not consumed.has(snail):
 				consumed[snail] = true
+				_play_ambient_event("eat")
 				_spawn_waste(snail.global_position, 0.18, WasteParticle.KIND_FISH)
 				snail.queue_free()
 
@@ -520,21 +538,15 @@ func _tick(dt: float) -> void:
 			var alga = ev["eat_algae"]
 			if is_instance_valid(alga) and not consumed.has(alga):
 				consumed[alga] = true
+				_play_ambient_event("eat")
 				algae.erase(alga)
 				_spawn_waste(alga.global_position, 0.08, WasteParticle.KIND_FISH)
 				alga.queue_free()
 
 		if ev.get("die", false):
-			# Natural death (old age / starvation). Hand off to the entity's
-			# start_dying() so it plays a sink + tilt + fade animation before
-			# actually being freed and dropping its mulm — much more readable
-			# than the instant-pop the old code did. Predator kills go through
-			# kill_prey instead and still free immediately (they read as eaten,
-			# not dying of natural causes). Guard with `consumed` so if both a
-			# die event and a kill_prey land in the same tick we don't double-
-			# process.
 			if not consumed.has(actor):
 				consumed[actor] = true
+				_play_ambient_event("death")
 				if actor.has_method("start_dying"):
 					actor.start_dying()
 				else:
@@ -613,7 +625,7 @@ func _release_livebearer_fry(mother: Fish, brood_genome: Dictionary) -> void:
 		register_fish(fry)
 	# Mother's belly is empty: extra exhaustion + small recovery cooldown.
 	mother.energy = maxf(0.0, mother.energy - 0.20)
-	_play_ambient(0.65)
+	_play_ambient_event("birth")
 
 
 func _lay_eggs(a: Fish, b: Fish) -> void:
@@ -646,7 +658,7 @@ func _lay_eggs(a: Fish, b: Fish) -> void:
 			register_fish(fry)
 		# Mother's belly is empty: extra exhaustion + small recovery cooldown.
 		mother.energy = maxf(0.0, mother.energy - 0.20)
-		_play_ambient(0.65)
+		_play_ambient_event("birth")
 		return
 
 	# Egg-layers: choose a plant leaf if available, else drop on substrate.
@@ -698,7 +710,7 @@ func _lay_eggs(a: Fish, b: Fish) -> void:
 		b.brooding_at = lay_at
 		b.brooding_remaining = Fish.BROODING_DURATION if b.swim_pattern == "hover" else Fish.BROODING_DURATION_LIGHT
 
-	_play_ambient(0.4)  # soft mid-tone for laying
+	_play_ambient_event("spawn")
 
 
 func _hatch(e: FishEgg) -> void:
@@ -713,20 +725,27 @@ func _hatch(e: FishEgg) -> void:
 	fry.hunger = 0.3
 	fry.energy = 1.0
 	register_fish(fry)
-	_play_ambient(0.7)  # joyful high plink on hatch
+	_play_ambient_event("birth")
 	if not _logged_first_hatch:
 		_logged_first_hatch = true
 		log_story_event("First fry hatched — a baby %s entered the tank." % e.species)
 
 
-# Helper - look up the audio node and emit a plink. Cheap no-op if missing.
-func _play_ambient(intensity: float) -> void:
+# Helper - look up the audio node and emit a specific musical event.
+func _play_ambient_event(event_name: String) -> void:
 	var root := get_tree().current_scene
 	if root == null:
 		return
 	var audio := root.get_node_or_null("AmbientAudio")
-	if audio != null and audio.has_method("play_event_plink"):
-		audio.play_event_plink(intensity)
+	if audio != null:
+		if audio.has_method("play_aquarium_event"):
+			audio.play_aquarium_event(event_name)
+		elif audio.has_method("play_event_plink"):
+			var intensity: float = 0.5
+			if event_name == "birth": intensity = 0.7
+			elif event_name == "spawn": intensity = 0.4
+			elif event_name == "death": intensity = 0.2
+			audio.play_event_plink(intensity)
 
 
 func _emit_stats() -> void:

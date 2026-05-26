@@ -15,6 +15,8 @@ extends Node3D
 var tannins: float = 0.0
 var _water_mesh: MeshInstance3D = null
 var _water_material_ref: StandardMaterial3D = null
+var _caustic_meshes: Array[MeshInstance3D] = []
+var _caustics_mat: ShaderMaterial = null
 var _mulm_voxels: Array = []
 var algae_root: Node3D = null
 # Driftwood voxels captured in _build_hardscape so the biofilm tick can
@@ -190,6 +192,7 @@ func _ready() -> void:
 	_build_glass()
 	_build_snails()  # static decor
 	_build_light_fixture()
+	_setup_caustics()
 	await get_tree().process_frame
 
 	# When the active tank has a saved state.json AND that save is compatible
@@ -361,6 +364,20 @@ func _process(dt: float) -> void:
 				continue
 			spot.light_color = beam_color
 			spot.light_energy = spot_energy
+
+		# Sync caustics material.
+		if _caustics_mat != null:
+			var show_caustics: bool = true
+			if cfg2 != null:
+				show_caustics = bool(cfg2.light_caustics)
+			
+			if show_caustics:
+				# Scale caustics intensity by daylight and max energy.
+				var intensity: float = dl * max_energy * 2.0
+				_caustics_mat.set_shader_parameter("caustic_intensity", clampf(intensity, 0.0, 1.0))
+				_caustics_mat.set_shader_parameter("light_color", beam_color)
+			else:
+				_caustics_mat.set_shader_parameter("caustic_intensity", 0.0)
 
 		# Sync god ray materials to the light cycle and Render panel parameters.
 		var density: float = 0.02
@@ -542,6 +559,20 @@ func _random_xz_in_band(z_min: float, z_max: float, margin: float = 0.4) -> Vect
 	return Vector2(0.0, clampf((z_min + z_max) * 0.5, -TANK_HALF_D, TANK_HALF_D))
 
 
+func _setup_caustics() -> void:
+	if _caustics_mat == null:
+		_caustics_mat = ShaderMaterial.new()
+		_caustics_mat.shader = load("res://shaders/caustics.gdshader")
+
+	for mi in _caustic_meshes:
+		if is_instance_valid(mi) and mi.material_override != null:
+			var mat = mi.material_override
+			if mat is ShaderMaterial:
+				var dup_mat = mat.duplicate()
+				dup_mat.next_pass = _caustics_mat
+				mi.material_override = dup_mat
+
+
 func _build_substrate() -> void:
 	var container := Node3D.new()
 	container.name = "Substrate"
@@ -572,8 +603,10 @@ func _build_substrate() -> void:
 					var rel: float = float(r - (rows - soil_rows)) / float(maxi(1, soil_rows))
 					var idx: int = clampi(int(rel * 5.0 + _rng.randf() * 1.5), 0, 5)
 					color = ramp[idx]
-				_add_cube(container, Vector3(x, y, z), Vector3(voxel_size, voxel_size, voxel_size),
+				var mi := _add_cube(container, Vector3(x, y, z), Vector3(voxel_size, voxel_size, voxel_size),
 						  _solid_mat(color))
+				if r >= rows - 2:
+					_caustic_meshes.append(mi)
 
 
 func _build_hardscape() -> void:
@@ -600,12 +633,15 @@ func _build_hardscape() -> void:
 			var t: float = float(s) / float(steps)
 			var p: Vector3 = a.lerp(b, t)
 			var size: float = 0.55
-			_driftwood_voxels.append(_add_cube(
-				c, p, Vector3(size, size, size), mat_dark))
+			var mi_d := _add_cube(c, p, Vector3(size, size, size), mat_dark)
+			_driftwood_voxels.append(mi_d)
+			_caustic_meshes.append(mi_d)
 			for dx in [-1, 1]:
-				_driftwood_voxels.append(_add_cube(
+				var mi_l := _add_cube(
 					c, p + Vector3(0, size * 0.5, dx * size * 0.4),
-					Vector3(size * 0.6, size * 0.6, size * 0.6), mat_light))
+					Vector3(size * 0.6, size * 0.6, size * 0.6), mat_light)
+				_driftwood_voxels.append(mi_l)
+				_caustic_meshes.append(mi_l)
 
 	var stone_mat := _solid_mat(C_STONE_LIGHT)
 	var stone_dark := _solid_mat(C_STONE_DARK)
@@ -618,6 +654,7 @@ func _build_hardscape() -> void:
 			var size := _rng.randf_range(0.7, 1.1)
 			var m: Material = stone_mat if (i & 1) == 0 else stone_dark
 			var mi := _add_cube(c, sp + jitter, Vector3(size, size, size), m)
+			_caustic_meshes.append(mi)
 			mi.rotation = Vector3(_rng.randf_range(-0.3, 0.3), _rng.randf_range(0, PI),
 								  _rng.randf_range(-0.3, 0.3))
 
