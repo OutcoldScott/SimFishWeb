@@ -15,6 +15,10 @@ extends Node
 class_name SimDriver
 
 signal stats_changed(stats: Dictionary)
+# Discrete events for telemetry/logging. kind is one of "death", "birth",
+# "spawn", "purchase", "story". main.gd forwards these to the host page on
+# web builds. info carries optional context (species, text, ...).
+signal sim_event(kind: String, info: Dictionary)
 
 const SIM_HZ: float = 10.0
 const SIM_DT: float = 1.0 / SIM_HZ
@@ -732,7 +736,17 @@ func _hatch(e: FishEgg) -> void:
 
 
 # Helper - look up the audio node and emit a specific musical event.
-func _play_ambient_event(event_name: String) -> void:
+# Public event hook. Emits the sim_event signal so listeners (telemetry) can
+# react. Callers outside SimDriver (e.g. world.spawn_purchased_fish) use this.
+func notify_event(kind: String, info: Dictionary = {}) -> void:
+	sim_event.emit(kind, info)
+
+
+func _play_ambient_event(event_name: String, info: Dictionary = {}) -> void:
+	# Surface the loggable lifecycle beats as telemetry events. "eat" fires
+	# far too often to be useful, so it's intentionally excluded.
+	if event_name == "death" or event_name == "birth" or event_name == "spawn":
+		sim_event.emit(event_name, info)
 	var root := get_tree().current_scene
 	if root == null:
 		return
@@ -901,6 +915,7 @@ func log_story_event(text: String) -> void:
 	story_events.append(entry)
 	if story_events.size() > MAX_STORY_EVENTS:
 		story_events.pop_front()
+	sim_event.emit("story", {"text": text})
 	# Trigger an ambient plink so the player hears a story beat even if
 	# the dialog is closed.
 	var amb: Node = get_tree().current_scene.get_node_or_null("AmbientAudio")

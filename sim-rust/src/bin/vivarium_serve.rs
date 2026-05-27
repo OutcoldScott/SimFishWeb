@@ -4,11 +4,17 @@
 // browser, and collects per-client telemetry (UA, per-session UUID,
 // ecosystem stats, sim + render FPS) via POST /telemetry.
 //
-// Two optional sinks:
-//   --log-stdout            pretty-prints each payload as it arrives
+// Sinks:
+//   --log-metrics           pretty-prints each periodic metrics snapshot as
+//                           it arrives (off by default)
 //   --prometheus            exposes /metrics in Prometheus exposition format
 //                           summarising every client seen within the
 //                           --client-timeout window
+//
+// Discrete simulation events (tank opened/created, creature spawned/died/
+// purchased, story milestones) POST immediately to /log, one event per
+// request, each carrying the session UUID. They are ALWAYS logged to stdout,
+// one line each, independent of --log-metrics.
 //
 // The Godot Web build needs cross-origin isolation for SharedArrayBuffer +
 // threads, so every response carries COEP/COOP headers. We also inject a
@@ -47,9 +53,10 @@ struct Args {
     #[arg(long)]
     web_root: Option<PathBuf>,
 
-    /// Print each incoming telemetry payload to stdout (pretty JSON).
+    /// Pretty-print each periodic metrics snapshot to stdout. Discrete events
+    /// are logged regardless of this flag.
     #[arg(long)]
-    log_stdout: bool,
+    log_metrics: bool,
 
     /// Expose Prometheus metrics at /metrics.
     #[arg(long)]
@@ -116,20 +123,20 @@ fn main() {
     // string the user gave us.
     println!("vivarium-serve listening on http://{bind}");
     println!("  web-root        : {}", web_root.display());
-    println!("  log-stdout      : {}", args.log_stdout);
+    println!("  log-metrics     : {}", args.log_metrics);
     println!("  prometheus      : {}", args.prometheus);
     println!("  client-timeout  : {}s", args.client_timeout);
 
     for request in server.incoming_requests() {
         let clients = Arc::clone(&clients);
         let web_root = web_root.clone();
-        let log_stdout = args.log_stdout;
+        let log_metrics = args.log_metrics;
         let prometheus = args.prometheus;
         // Each request runs on its own thread so a slow telemetry POST never
         // stalls the static-file path. tiny_http is sync, so this is the
         // standard pattern.
         std::thread::spawn(move || {
-            if let Err(e) = handle(request, &web_root, &clients, log_stdout, prometheus, timeout) {
+            if let Err(e) = handle(request, &web_root, &clients, log_metrics, prometheus, timeout) {
                 eprintln!("request error: {e}");
             }
         });
@@ -142,7 +149,7 @@ fn handle(
     mut req: Request,
     web_root: &Path,
     clients: &ClientStore,
-    log_stdout: bool,
+    log_metrics: bool,
     prometheus_enabled: bool,
     client_timeout: Duration,
 ) -> std::io::Result<()> {
@@ -158,11 +165,28 @@ fn handle(
                 .remote_addr()
                 .map(|a| a.to_string())
                 .unwrap_or_else(|| "?".to_string());
-            let resp = match handle_telemetry(&body, &remote, clients, log_stdout) {
+            let resp = match handle_telemetry(&body, &remote, clients, log_metrics) {
                 Ok(()) => Response::from_string("ok").with_status_code(204),
                 Err(e) => {
                     eprintln!("telemetry rejected: {e}");
                     Response::from_string(format!("bad telemetry: {e}")).with_status_code(400)
+                }
+            };
+            req.respond(with_common_headers(resp))
+        }
+        (Method::Post, "/log") => {
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body)?;
+            let remote = req
+                .remote_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            // Events are always logged to stdout, independent of --log-metrics.
+            let resp = match handle_log(&body, &remote) {
+                Ok(()) => Response::from_string("ok").with_status_code(204),
+                Err(e) => {
+                    eprintln!("log rejected: {e}");
+                    Response::from_string(format!("bad event: {e}")).with_status_code(400)
                 }
             };
             req.respond(with_common_headers(resp))
@@ -325,8 +349,30 @@ const TELEMETRY_SHIM: &str = r#"<script>
     latestStats = obj;
   };
 
+  // Discrete events POST immediately to /log (one event per request),
+  // separate from the periodic metrics on /telemetry. GDScript calls
+  // window.__vivariumPushEvent(obj) on tank open/new, creature spawn/death/
+  // purchase, and story milestones. Each event carries the session UUID so
+  // the server can attribute it.
+  window.__vivariumPushEvent = function (obj) {
+    var ev = {};
+    for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) ev[k] = obj[k];
+    ev.uuid = sessionId;
+    ev.ts = Date.now();
+    try {
+      fetch('/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ev),
+        keepalive: true
+      }).catch(function () { /* best-effort */ });
+    } catch (e) { /* best-effort */ }
+  };
+  // "A client opens" — fired once per session, before any tank is loaded.
+  window.__vivariumPushEvent({ type: 'client_open', t: 0 });
+
   function post() {
-    if (document.hidden) return; // skip when tab is backgrounded
+    if (document.hidden) return; // skip metrics when tab is backgrounded
     var payload = {
       uuid: sessionId,
       user_agent: navigator.userAgent,
@@ -373,7 +419,7 @@ fn handle_telemetry(
     body: &str,
     remote: &str,
     clients: &ClientStore,
-    log_stdout: bool,
+    log_metrics: bool,
 ) -> Result<(), String> {
     let v: Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
     let uuid = v
@@ -392,10 +438,9 @@ fn handle_telemetry(
     let (metrics, sim_fps, render_fps_from_stats) = extract_stats(&stats);
     let render_fps = render_fps_from_stats.or(display_fps);
 
-    if log_stdout {
-        // Re-pretty so the operator sees a clean snapshot per client.
+    if log_metrics {
         let pretty = serde_json::to_string_pretty(&v).unwrap_or(body.to_string());
-        println!("[telemetry {remote} {uuid}] {pretty}");
+        println!("[metrics {remote} {uuid}] {pretty}");
     }
 
     let mut guard = clients.lock().unwrap();
@@ -412,6 +457,52 @@ fn handle_telemetry(
         },
     );
     Ok(())
+}
+
+// Always-on: log one discrete event line to stdout. The event JSON carries
+// the session uuid (added client-side) plus a `type` and optional context.
+fn handle_log(body: &str, remote: &str) -> Result<(), String> {
+    let v: Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+    let uuid = v
+        .get("uuid")
+        .and_then(|x| x.as_str())
+        .unwrap_or("?")
+        .to_string();
+    println!("[event {remote} {uuid}] {}", format_event(&v));
+    Ok(())
+}
+
+// Render one event as a compact "type key=value ..." line. The `type` field
+// leads; remaining scalar fields follow as key=value pairs (objects/arrays
+// are skipped to keep the line readable). uuid/ts are shown in the log prefix
+// already, so they're omitted from the field list.
+fn format_event(ev: &Value) -> String {
+    let obj = match ev.as_object() {
+        Some(o) => o,
+        None => return ev.to_string(),
+    };
+    let kind = obj
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("event")
+        .to_string();
+    let mut parts: Vec<String> = Vec::new();
+    let skip = ["type", "uuid", "ts"];
+    let mut keys: Vec<&String> = obj.keys().filter(|k| !skip.contains(&k.as_str())).collect();
+    keys.sort();
+    for k in keys {
+        match &obj[k] {
+            Value::String(s) => parts.push(format!("{k}={s}")),
+            Value::Number(n) => parts.push(format!("{k}={n}")),
+            Value::Bool(b) => parts.push(format!("{k}={b}")),
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        kind
+    } else {
+        format!("{kind}  {}", parts.join(" "))
+    }
 }
 
 // Walk the stats object pulling out numeric leaves as gauges. sim_fps /

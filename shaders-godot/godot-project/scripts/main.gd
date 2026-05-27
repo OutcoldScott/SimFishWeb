@@ -239,6 +239,8 @@ func _ready() -> void:
 	_sim = world.get_node_or_null("SimDriver")
 	if _sim != null and _sim.has_signal("stats_changed"):
 		_sim.connect("stats_changed", _on_stats_changed)
+	if _sim != null and _sim.has_signal("sim_event"):
+		_sim.connect("sim_event", _on_sim_event)
 	# Hook toggle buttons to the panels' toggle methods.
 	if settings_toggle != null and settings_panel != null:
 		settings_toggle.pressed.connect(settings_panel.toggle)
@@ -1818,6 +1820,27 @@ func _push_telemetry_to_js() -> void:
 	)
 
 
+# Forward a discrete sim event to the host page, which batches it into the
+# next /telemetry POST. The headless launcher logs every event to stdout
+# regardless of its metrics-logging setting.
+func _on_sim_event(kind: String, info: Dictionary) -> void:
+	_push_event_to_js(kind, info)
+
+
+func _push_event_to_js(kind: String, info: Dictionary) -> void:
+	if not OS.has_feature("web"):
+		return
+	var ev: Dictionary = info.duplicate()
+	ev["type"] = kind
+	if _sim != null:
+		ev["t"] = float(_sim.elapsed_runtime_s)
+	var body: String = JSON.stringify(ev)
+	JavaScriptBridge.eval(
+		"if (window.__vivariumPushEvent) { window.__vivariumPushEvent(" + body + "); }",
+		true,
+	)
+
+
 func _update_hud(_mouse_pos: Vector2, _any_btn: bool) -> void:
 	# Header re-rendered on stats_changed; nothing per-frame.
 	pass
@@ -2481,6 +2504,8 @@ func _try_load_saved_state() -> void:
 		return
 	var path: String = saves.state_path(int(saves.active_slot))
 	if not FileAccess.file_exists(path):
+		# No save for this slot: the world spawned a fresh population.
+		_push_event_to_js("tank_new", {"seed": "%08x" % int(_sim.tank_seed)} if _sim != null else {})
 		return
 	var d: Dictionary = saves.read_json(path)
 	if d.is_empty():
@@ -2492,6 +2517,7 @@ func _try_load_saved_state() -> void:
 	# Aquascape lives outside the sim dict.
 	if d.has("aquascape"):
 		_restore_aquascape(d["aquascape"])
+	_push_event_to_js("tank_load", {"seed": "%08x" % int(_sim.tank_seed)} if _sim != null else {})
 	print_verbose("[vivarium] restored save from ", path)
 
 

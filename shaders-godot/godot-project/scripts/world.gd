@@ -2800,6 +2800,8 @@ func spawn_purchased_fish(genome: Dictionary) -> void:
 	var spawn_y: float = clampf(pref_y + 0.4, SUBSTRATE_DEPTH + 0.5, WATER_HEIGHT - 0.4)
 	var xz: Vector2 = _random_xz_in_band(-TANK_HALF_D * 0.6, TANK_HALF_D * 0.6, 0.8)
 	_spawn_fish_at(genome, Vector3(xz.x, spawn_y, xz.y))
+	if sim != null:
+		sim.notify_event("purchase", {"species": str(genome.get("species", "fish"))})
 
 
 func _spawn_fish_at(genome: Dictionary, pos: Vector3) -> void:

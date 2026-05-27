@@ -5,7 +5,8 @@
 #   HOST            bind address           (default 0.0.0.0)
 #   PORT            TCP port               (default 8080)
 #   WEB_ROOT        Godot web build path   (default /opt/vivarium/web)
-#   LOG_STDOUT      log telemetry to stdout (true sets --log-stdout)
+#   LOG_METRICS     log metrics snapshots to stdout (true sets --log-metrics);
+#                   discrete events are logged regardless
 #   PROMETHEUS      expose /metrics        (true sets --prometheus)
 #   CLIENT_TIMEOUT  seconds before a client expires from /metrics
 #
@@ -28,8 +29,8 @@ if [[ -n "${WEB_ROOT:-}" ]]; then
     args+=( --web-root "$WEB_ROOT" )
 fi
 
-if is_truthy "${LOG_STDOUT:-}"; then
-    args+=( --log-stdout )
+if is_truthy "${LOG_METRICS:-}"; then
+    args+=( --log-metrics )
 fi
 
 if is_truthy "${PROMETHEUS:-}"; then

@@ -102,7 +102,8 @@ ENV HOST=0.0.0.0 \
     WEB_ROOT=/opt/vivarium/web \
     PROMETHEUS=true \
     CLIENT_TIMEOUT=30
-# LOG_STDOUT intentionally not set. Stdout telemetry logging is off by
-# default; pass `-e LOG_STDOUT=true` at run time to enable.
+# LOG_METRICS intentionally not set. Stdout logging of the periodic metrics
+# snapshots is off by default; pass `-e LOG_METRICS=true` to enable. Discrete
+# simulation events are logged to stdout regardless of this setting.
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
