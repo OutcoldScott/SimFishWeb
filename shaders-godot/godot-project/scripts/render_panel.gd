@@ -28,6 +28,8 @@ const RESOLUTIONS: Array = [
 	{"label": "512x288 (default)", "w": 512, "h": 288},
 	{"label": "768x432", "w": 768, "h": 432},
 	{"label": "1024x576 (smooth)", "w": 1024, "h": 576},
+	{"label": "2048x1152", "w": 2048, "h": 1152},
+	{"label": "4096x2304 (absurd)", "w": 4096, "h": 2304},
 ]
 const MSAA_LABELS: Array[String] = ["Off", "2x", "4x", "8x"]
 
