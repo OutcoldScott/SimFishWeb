@@ -2508,6 +2508,12 @@ func notify_event(kind: String, info: Dictionary = {}) -> void:
 	sim_event.emit(kind, info)
 
 # Helper - look up the audio node and emit a specific musical event.
+# Public event hook. Emits the sim_event signal so listeners (telemetry) can
+# react. Callers outside SimDriver (e.g. world.spawn_purchased_fish) use this.
+func notify_event(kind: String, info: Dictionary = {}) -> void:
+	sim_event.emit(kind, info)
+
+
 # The optional `species` is used by the audio side to pick a per-species pitch
 # palette (small bright fish trend up, large predators trend down).
 func _play_ambient_event(event_name: String, intensity: float = -1.0, species: String = "") -> void:
