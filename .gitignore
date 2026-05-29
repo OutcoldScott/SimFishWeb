@@ -38,6 +38,11 @@ shaders-godot/godot-project/capture_quantized.png
 # for them are transient too.
 shaders-godot/godot-project/fonts/
 
+shaders-godot/godot-project/addons/godotsteam/
+steam/content/
+steam/output/
+steam/app_build.vdf
+steam/depot_build_*.vdf
 # Built macOS app + release artifacts - distributed via GitHub Releases.
 build/
 
