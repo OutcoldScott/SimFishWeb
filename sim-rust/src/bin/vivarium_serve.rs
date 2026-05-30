@@ -66,6 +66,54 @@ struct Args {
     /// dropped from the Prometheus metrics. Also bounds memory usage.
     #[arg(long, default_value_t = 30)]
     client_timeout: u64,
+
+    /// Lower-left corner overlay image. Either a local file path (served
+    /// same-origin, the robust option under the page's COEP) or an http(s)
+    /// URL (the remote must be COEP-embeddable, i.e. send CORP/CORS).
+    #[arg(long)]
+    overlay_left: Option<String>,
+
+    /// CSS width for the left overlay (e.g. "120px", "10%"). Default: natural.
+    #[arg(long)]
+    overlay_left_width: Option<String>,
+
+    /// CSS height for the left overlay (e.g. "64px"). Default: natural.
+    #[arg(long)]
+    overlay_left_height: Option<String>,
+
+    /// Lower-right corner overlay image. Same path rules as --overlay-left.
+    #[arg(long)]
+    overlay_right: Option<String>,
+
+    /// CSS width for the right overlay. Default: natural.
+    #[arg(long)]
+    overlay_right_width: Option<String>,
+
+    /// CSS height for the right overlay. Default: natural.
+    #[arg(long)]
+    overlay_right_height: Option<String>,
+}
+
+// One configured corner overlay.
+#[derive(Debug, Clone)]
+struct Overlay {
+    // Either a local filesystem path or an http(s) URL.
+    src: String,
+    width: Option<String>,
+    height: Option<String>,
+}
+
+impl Overlay {
+    fn is_url(&self) -> bool {
+        self.src.starts_with("http://") || self.src.starts_with("https://")
+    }
+}
+
+// Resolved overlay config for both corners, shared with request handlers.
+#[derive(Debug, Clone, Default)]
+struct Overlays {
+    left: Option<Overlay>,
+    right: Option<Overlay>,
 }
 
 // ---- Per-client telemetry snapshot ------------------------------------------------
@@ -119,6 +167,8 @@ fn main() {
     let clients: ClientStore = Arc::new(Mutex::new(HashMap::new()));
     let timeout = Duration::from_secs(args.client_timeout);
 
+    let overlays = Arc::new(build_overlays(&args));
+
     // Avoid coupling to tiny_http's ListenAddr type. Just echo the bind
     // string the user gave us.
     println!("vivarium-serve listening on http://{bind}");
@@ -126,20 +176,49 @@ fn main() {
     println!("  log-metrics     : {}", args.log_metrics);
     println!("  prometheus      : {}", args.prometheus);
     println!("  client-timeout  : {}s", args.client_timeout);
+    if let Some(o) = &overlays.left {
+        println!("  overlay-left    : {}", o.src);
+    }
+    if let Some(o) = &overlays.right {
+        println!("  overlay-right   : {}", o.src);
+    }
 
     for request in server.incoming_requests() {
         let clients = Arc::clone(&clients);
         let web_root = web_root.clone();
+        let overlays = Arc::clone(&overlays);
         let log_metrics = args.log_metrics;
         let prometheus = args.prometheus;
         // Each request runs on its own thread so a slow telemetry POST never
         // stalls the static-file path. tiny_http is sync, so this is the
         // standard pattern.
         std::thread::spawn(move || {
-            if let Err(e) = handle(request, &web_root, &clients, log_metrics, prometheus, timeout) {
+            if let Err(e) = handle(
+                request,
+                &web_root,
+                &clients,
+                &overlays,
+                log_metrics,
+                prometheus,
+                timeout,
+            ) {
                 eprintln!("request error: {e}");
             }
         });
+    }
+}
+
+fn build_overlays(args: &Args) -> Overlays {
+    let mk = |src: &Option<String>, w: &Option<String>, h: &Option<String>| -> Option<Overlay> {
+        src.as_ref().map(|s| Overlay {
+            src: s.clone(),
+            width: w.clone(),
+            height: h.clone(),
+        })
+    };
+    Overlays {
+        left: mk(&args.overlay_left, &args.overlay_left_width, &args.overlay_left_height),
+        right: mk(&args.overlay_right, &args.overlay_right_width, &args.overlay_right_height),
     }
 }
 
@@ -149,6 +228,7 @@ fn handle(
     mut req: Request,
     web_root: &Path,
     clients: &ClientStore,
+    overlays: &Overlays,
     log_metrics: bool,
     prometheus_enabled: bool,
     client_timeout: Duration,
@@ -202,7 +282,13 @@ fn handle(
             );
             req.respond(with_common_headers(resp))
         }
-        (Method::Get, _) | (Method::Head, _) => serve_static(req, web_root, &path),
+        (Method::Get, "/overlay/left") | (Method::Head, "/overlay/left") => {
+            serve_overlay(req, overlays.left.as_ref())
+        }
+        (Method::Get, "/overlay/right") | (Method::Head, "/overlay/right") => {
+            serve_overlay(req, overlays.right.as_ref())
+        }
+        (Method::Get, _) | (Method::Head, _) => serve_static(req, web_root, &path, overlays),
         _ => {
             let resp = Response::from_string("method not allowed").with_status_code(405);
             req.respond(with_common_headers(resp))
@@ -212,7 +298,7 @@ fn handle(
 
 // ---- static file serving -----------------------------------------------------------
 
-fn serve_static(req: Request, web_root: &Path, path: &str) -> std::io::Result<()> {
+fn serve_static(req: Request, web_root: &Path, path: &str, overlays: &Overlays) -> std::io::Result<()> {
     let rel = if path == "/" { "/index.html" } else { path };
     // Strip leading '/', reject any traversal. Components::ParentDir would
     // escape the web_root.
@@ -233,15 +319,51 @@ fn serve_static(req: Request, web_root: &Path, path: &str) -> std::io::Result<()
     let mime = mime_for(&candidate);
     let bytes = fs::read(&candidate)?;
 
-    // Special-case index.html: inject the telemetry shim so the page knows
-    // its own origin and how to POST stats up.
+    // Special-case index.html: inject the telemetry shim (so the page knows
+    // how to POST stats/events) and any configured corner overlays.
     let (bytes, mime) = if candidate.file_name().map(|n| n == "index.html").unwrap_or(false) {
         let html = String::from_utf8_lossy(&bytes).to_string();
-        (inject_telemetry_shim(&html).into_bytes(), "text/html; charset=utf-8".to_string())
+        let injected = inject_html(&html, overlays);
+        (injected.into_bytes(), "text/html; charset=utf-8".to_string())
     } else {
         (bytes, mime)
     };
 
+    let resp = Response::from_data(bytes).with_header(
+        Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap(),
+    );
+    req.respond(with_common_headers(resp))
+}
+
+// Serve a configured corner overlay image from its local file. URL-backed
+// overlays are referenced directly in the HTML and never hit this route.
+fn serve_overlay(req: Request, overlay: Option<&Overlay>) -> std::io::Result<()> {
+    let ov = match overlay {
+        Some(o) if !o.is_url() => o,
+        _ => {
+            let resp = Response::from_string("not found").with_status_code(404);
+            return req.respond(with_common_headers(resp));
+        }
+    };
+    let path = Path::new(&ov.src);
+    if !path.is_file() {
+        eprintln!("overlay file not found: {}", ov.src);
+        let resp = Response::from_string("overlay file not found").with_status_code(404);
+        return req.respond(with_common_headers(resp));
+    }
+    let mime = mime_for(path);
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            // Usually permissions: the configured user (vivarium in the
+            // container) can't read the file. Surface it instead of letting
+            // the request error path swallow it.
+            eprintln!("overlay file unreadable {}: {e}", ov.src);
+            let resp = Response::from_string(format!("overlay unreadable: {e}"))
+                .with_status_code(500);
+            return req.respond(with_common_headers(resp));
+        }
+    };
     let resp = Response::from_data(bytes).with_header(
         Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap(),
     );
@@ -261,6 +383,9 @@ fn mime_for(path: &Path) -> String {
         "json" => "application/json",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
         "svg" => "image/svg+xml",
         "css" => "text/css; charset=utf-8",
         "txt" => "text/plain; charset=utf-8",
@@ -399,18 +524,75 @@ const TELEMETRY_SHIM: &str = r#"<script>
 </script>
 "#;
 
-fn inject_telemetry_shim(html: &str) -> String {
+fn inject_html(html: &str, overlays: &Overlays) -> String {
+    let mut injected = String::with_capacity(html.len() + TELEMETRY_SHIM.len() + 512);
+    injected.push_str(TELEMETRY_SHIM);
+    injected.push_str(&overlay_markup(overlays));
     // Inject just before </body>; if missing (shouldn't happen for Godot's
     // template, but be defensive), append at the end.
     if let Some(idx) = html.rfind("</body>") {
-        let mut out = String::with_capacity(html.len() + TELEMETRY_SHIM.len());
+        let mut out = String::with_capacity(html.len() + injected.len());
         out.push_str(&html[..idx]);
-        out.push_str(TELEMETRY_SHIM);
+        out.push_str(&injected);
         out.push_str(&html[idx..]);
         out
     } else {
-        format!("{}{}", html, TELEMETRY_SHIM)
+        format!("{html}{injected}")
     }
+}
+
+// Build the <style> + <img> markup for the configured corner overlays. The
+// images are pointer-events:none so they never intercept canvas input, and
+// fixed to the bottom corners above the canvas. A local-file overlay points
+// at the same-origin /overlay/<side> route; a URL overlay points straight at
+// the remote (which must be COEP-embeddable to render).
+fn overlay_markup(overlays: &Overlays) -> String {
+    if overlays.left.is_none() && overlays.right.is_none() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<style>\
+.viv-overlay{position:fixed;bottom:12px;z-index:10;pointer-events:none;}\
+.viv-overlay-left{left:12px;}\
+.viv-overlay-right{right:12px;}\
+</style>",
+    );
+    if let Some(o) = &overlays.left {
+        out.push_str(&overlay_img(o, "left"));
+    }
+    if let Some(o) = &overlays.right {
+        out.push_str(&overlay_img(o, "right"));
+    }
+    out
+}
+
+fn overlay_img(o: &Overlay, side: &str) -> String {
+    let src = if o.is_url() {
+        html_attr_escape(&o.src)
+    } else {
+        format!("/overlay/{side}")
+    };
+    let mut style = String::new();
+    if let Some(w) = &o.width {
+        style.push_str(&format!("width:{};", css_value_escape(w)));
+    }
+    if let Some(h) = &o.height {
+        style.push_str(&format!("height:{};", css_value_escape(h)));
+    }
+    format!(
+        "<img class=\"viv-overlay viv-overlay-{side}\" src=\"{src}\" style=\"{style}\" alt=\"\">"
+    )
+}
+
+// Minimal escaping so a configured value can't break out of the attribute.
+fn html_attr_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+// CSS length values are simple; strip anything that could close the style
+// attribute or inject extra declarations.
+fn css_value_escape(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '"' | ';' | '<' | '>' | '{' | '}')).collect()
 }
 
 // ---- telemetry ingestion -----------------------------------------------------------

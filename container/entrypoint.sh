@@ -9,6 +9,12 @@
 #                   discrete events are logged regardless
 #   PROMETHEUS      expose /metrics        (true sets --prometheus)
 #   CLIENT_TIMEOUT  seconds before a client expires from /metrics
+#   OVERLAY_LEFT          path or http(s) URL for the lower-left overlay
+#   OVERLAY_LEFT_WIDTH    CSS width  for the left overlay (e.g. 120px, 10%)
+#   OVERLAY_LEFT_HEIGHT   CSS height for the left overlay
+#   OVERLAY_RIGHT         path or http(s) URL for the lower-right overlay
+#   OVERLAY_RIGHT_WIDTH   CSS width  for the right overlay
+#   OVERLAY_RIGHT_HEIGHT  CSS height for the right overlay
 #
 # Anything passed positionally to the container is appended last, so
 #   podman run ... vivarium-serve --help
@@ -39,6 +45,27 @@ fi
 
 if [[ -n "${CLIENT_TIMEOUT:-}" ]]; then
     args+=( --client-timeout "$CLIENT_TIMEOUT" )
+fi
+
+# Corner overlays. Each --overlay-* flag is added only when the matching env
+# var is set, so unspecified corners stay invisible.
+if [[ -n "${OVERLAY_LEFT:-}" ]]; then
+    args+=( --overlay-left "$OVERLAY_LEFT" )
+fi
+if [[ -n "${OVERLAY_LEFT_WIDTH:-}" ]]; then
+    args+=( --overlay-left-width "$OVERLAY_LEFT_WIDTH" )
+fi
+if [[ -n "${OVERLAY_LEFT_HEIGHT:-}" ]]; then
+    args+=( --overlay-left-height "$OVERLAY_LEFT_HEIGHT" )
+fi
+if [[ -n "${OVERLAY_RIGHT:-}" ]]; then
+    args+=( --overlay-right "$OVERLAY_RIGHT" )
+fi
+if [[ -n "${OVERLAY_RIGHT_WIDTH:-}" ]]; then
+    args+=( --overlay-right-width "$OVERLAY_RIGHT_WIDTH" )
+fi
+if [[ -n "${OVERLAY_RIGHT_HEIGHT:-}" ]]; then
+    args+=( --overlay-right-height "$OVERLAY_RIGHT_HEIGHT" )
 fi
 
 exec /usr/local/bin/vivarium-serve "${args[@]}" "$@"
