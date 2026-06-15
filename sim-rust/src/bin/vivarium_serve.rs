@@ -1,4 +1,4 @@
-// Headless launcher for Vivarium.
+// Headless launcher for walstad loom.
 //
 // Serves the Godot HTML5 export so the simulation runs entirely in the
 // browser, and collects per-client telemetry (UA, per-session UUID,
@@ -35,7 +35,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 #[derive(Parser, Debug)]
 #[command(
     name = "vivarium-serve",
-    about = "Headless web host for the Vivarium simulation.",
+    about = "Headless web host for the walstad loom simulation.",
     version
 )]
 struct Args {
@@ -476,10 +476,10 @@ const TELEMETRY_SHIM: &str = r#"<script>
 
   // Discrete events POST immediately to /log (one event per request),
   // separate from the periodic metrics on /telemetry. GDScript calls
-  // window.__vivariumPushEvent(obj) on tank open/new, creature spawn/death/
+  // window.__walstadLoomPushEvent(obj) on tank open/new, creature spawn/death/
   // purchase, and story milestones. Each event carries the session UUID so
   // the server can attribute it.
-  window.__vivariumPushEvent = function (obj) {
+  window.__walstadLoomPushEvent = function (obj) {
     var ev = {};
     for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) ev[k] = obj[k];
     ev.uuid = sessionId;
@@ -494,7 +494,7 @@ const TELEMETRY_SHIM: &str = r#"<script>
     } catch (e) { /* best-effort */ }
   };
   // "A client opens" — fired once per session, before any tank is loaded.
-  window.__vivariumPushEvent({ type: 'client_open', t: 0 });
+  window.__walstadLoomPushEvent({ type: 'client_open', t: 0 });
 
   function post() {
     if (document.hidden) return; // skip metrics when tab is backgrounded

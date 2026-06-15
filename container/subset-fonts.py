@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download + subset the web fallback fonts for the Vivarium web export.
+"""Download + subset the web fallback fonts for the walstad loom web export.
 
 Run in the container's font-builder stage. Produces several tiny TTFs in the
 output dir, each holding only the glyphs the UI actually uses as icons. They
@@ -175,8 +175,8 @@ def write_notices(path, notices):
     metadata embedded in the font binaries.
     """
     lines = [
-        "Third-party font notices for the Vivarium web build",
-        "===================================================",
+        "Third-party font notices for the walstad loom web build",
+        "=======================================================",
         "",
         "The bundled web fallback fonts (res://fonts/web_fallback_*.ttf) are",
         "subsets of the fonts below, redistributed under the SIL Open Font",

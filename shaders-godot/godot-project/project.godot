@@ -24,7 +24,6 @@ WebEmojiFallback="*res://scripts/web_emoji_fallback.gd"
 SpeciesLibrary="*res://scripts/species_library.gd"
 SteamService="*res://scripts/steam_service.gd"
 AIDirector="*res://scripts/ai_director.gd"
-WebEmojiFallback="*res://scripts/web_emoji_fallback.gd"
 
 [display]
 

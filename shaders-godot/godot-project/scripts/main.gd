@@ -2492,7 +2492,7 @@ func _push_event_to_js(kind: String, info: Dictionary) -> void:
 		ev["t"] = float(_sim.elapsed_runtime_s)
 	var body: String = JSON.stringify(ev)
 	JavaScriptBridge.eval(
-		"if (window.__vivariumPushEvent) { window.__vivariumPushEvent(" + body + "); }",
+		"if (window.__walstadLoomPushEvent) { window.__walstadLoomPushEvent(" + body + "); }",
 		true,
 	)
 
