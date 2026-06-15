@@ -60,6 +60,28 @@ SYMBOL_CODEPOINTS = [
     0x25A6,  # SQUARE WITH ORTHOGONAL CROSSHATCH FILL ("Render" button)
     0x2303,  # UP ARROWHEAD (Ctrl key, "click feed" legend)
     0x2699,  # GEAR (settings button)
+    0x00B3,  # SUPERSCRIPT THREE
+    0x2083,  # SUBSCRIPT THREE (NO3- in chemistry readout)
+    0x2013,  # EN DASH
+    0x2026,  # HORIZONTAL ELLIPSIS (truncation / loading text)
+    0x2248,  # ALMOST EQUAL TO
+    0x2318,  # PLACE OF INTEREST SIGN (Cmd key hint)
+    0x21BA,  # ANTICLOCKWISE OPEN CIRCLE ARROW (reset)
+    0x21BB,  # CLOCKWISE OPEN CIRCLE ARROW (loop/refresh)
+    0x2713,  # CHECK MARK (toggles, walkthrough)
+    0x266A,  # EIGHTH NOTE (sound button)
+    0x26F6,  # SQUARE FOUR CORNERS (fullscreen)
+    0x3030,  # WAVY DASH
+    0x2605,  # BLACK STAR
+    0x25B2,  # BLACK UP-POINTING TRIANGLE
+    0x25BD,  # WHITE DOWN-POINTING TRIANGLE
+    0x25B8,  # BLACK RIGHT-POINTING SMALL TRIANGLE
+    0x25C2,  # BLACK LEFT-POINTING SMALL TRIANGLE
+    0x25C9,  # FISHEYE
+    0x25CB,  # WHITE CIRCLE
+    0x25CF,  # BLACK CIRCLE
+    0x23F9,  # BLACK SQUARE FOR STOP
+    0x23FA,  # BLACK CIRCLE FOR RECORD
 ]
 
 EMOJI_CODEPOINTS = [
@@ -76,6 +98,33 @@ EMOJI_CODEPOINTS = [
     0x1F5D1,  # WASTEBASKET
     0x1F441,  # EYE (follow-cam button)
     0x1FAA8,  # ROCK (aquascape button)
+    # Fauna + flora kinds (creature creator, life library, scenario picker).
+    0x1F420,  # TROPICAL FISH
+    0x1F9A0,  # MICROBE
+    0x1F9AA,  # OYSTER
+    0x1FAB1,  # WORM
+    0x1FAB7,  # LOTUS
+    0x1FAB8,  # CORAL
+    0x1F331,  # SEEDLING
+    0x1F333,  # DECIDUOUS TREE
+    0x1F339,  # ROSE
+    0x1F952,  # CUCUMBER
+    # Library / status / readout icons.
+    0x1F300,  # CYCLONE
+    0x1F32B,  # FOG
+    0x1F7E2,  # LARGE GREEN CIRCLE (status dot)
+    0x1F90D,  # WHITE HEART
+    0x1FA78,  # DROP OF BLOOD
+    0x1F4CC,  # PUSHPIN (library pin)
+    0x1F4A1,  # ELECTRIC LIGHT BULB (tips)
+    0x1F4DA,  # BOOKS (library button)
+    0x1F514,  # BELL (notifications button)
+    # Sound Studio + onboarding flourishes.
+    0x1F30A,  # WATER WAVE
+    0x1F389,  # PARTY POPPER
+    0x1F3B2,  # GAME DIE (randomize)
+    0x2728,   # SPARKLES (AI / wildcard)
+    0x2615,   # HOT BEVERAGE (lofi room)
 ]
 
 # (output filename, [candidate URLs], codepoints). First URL that downloads
