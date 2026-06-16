@@ -54,10 +54,14 @@ COPY shaders-godot/godot-project ./godot-project
 COPY --from=font-builder /fonts/*.ttf ./godot-project/fonts/
 # Godot won't create missing parent dirs for the export output.
 RUN mkdir -p /export
-# Two-step: --import primes the resource cache so any first-time .import
-# sidecars exist before --export-debug looks for them. Then the actual
-# Web export writes index.{html,js,wasm,pck,...} into /export.
+# Import twice, then export. A single cold --import loads project settings
+# (including the custom theme) before the theme's font .woff2 has been
+# imported, which logs spurious "non-existent resource" / "Error loading
+# custom project theme" errors. The second --import runs with a warm cache so
+# those cross-references resolve cleanly; --export-debug then writes
+# index.{html,js,wasm,pck,...} into /export.
 RUN cd godot-project \
+ && godot --headless --import . \
  && godot --headless --import . \
  && godot --headless --path . --export-debug Web /export/index.html
 

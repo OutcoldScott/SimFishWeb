@@ -29,21 +29,42 @@ const FONT_PATHS := [
 
 
 func _ready() -> void:
-	var base: Font = ThemeDB.fallback_font
-	if base == null:
-		return
 	var extra: Array[Font] = []
 	for path in FONT_PATHS:
 		if ResourceLoader.exists(path):
 			var f := load(path)
 			if f is Font:
 				extra.append(f)
+	# Absent on local/desktop builds: no fonts subset in, so this no-ops and
+	# the project still opens (system fonts cover the glyphs there anyway).
 	if extra.is_empty():
 		return
-	# Append rather than replace so we don't drop any fallbacks the engine
-	# already configured. fallbacks returns a copy, so reassign after editing.
+	# 1) Engine last-resort font, used by any Control with no theme font.
+	_chain_fallbacks(ThemeDB.fallback_font, extra)
+	# 2) The project theme's fonts. The custom theme's default_font chains a
+	#    SystemFont ("Apple Color Emoji", "Noto Color Emoji", ...) for its emoji
+	#    fallback, but the WASM runtime has NO system fonts, so that link
+	#    resolves to nothing and every themed Control would tofu. Append the
+	#    bundled fonts after it: on web they do the work; on desktop the system
+	#    emoji still win since they come first.
+	var theme: Theme = ThemeDB.get_project_theme()
+	if theme != null:
+		_chain_fallbacks(theme.default_font, extra)
+		for type_name in theme.get_font_type_list():
+			for font_name in theme.get_font_list(type_name):
+				_chain_fallbacks(theme.get_font(font_name, type_name), extra)
+
+
+# Append `extra` to a font's fallback chain (dedup, preserving existing entries).
+# fallbacks returns a copy, so we reassign after editing.
+func _chain_fallbacks(base: Font, extra: Array[Font]) -> void:
+	if base == null:
+		return
 	var chain: Array[Font] = base.fallbacks
+	var changed: bool = false
 	for f in extra:
 		if not chain.has(f):
 			chain.append(f)
-	base.fallbacks = chain
+			changed = true
+	if changed:
+		base.fallbacks = chain
