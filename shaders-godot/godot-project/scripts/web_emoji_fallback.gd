@@ -39,29 +39,39 @@ func _ready() -> void:
 	# the project still opens (system fonts cover the glyphs there anyway).
 	if extra.is_empty():
 		return
+	# On web the WASM runtime has NO system fonts. A SystemFont with
+	# allow_system_fallback left in a fallback chain sends the web TextServer
+	# into unbounded recursion when it tries (and fails) to resolve a glyph
+	# through the system ("Maximum call stack size exceeded" at startup). Strip
+	# those entries here; the bundled fonts below cover the glyphs instead.
+	var on_web: bool = OS.has_feature("web")
 	# 1) Engine last-resort font, used by any Control with no theme font.
-	_chain_fallbacks(ThemeDB.fallback_font, extra)
+	_chain_fallbacks(ThemeDB.fallback_font, extra, on_web)
 	# 2) The project theme's fonts. The custom theme's default_font chains a
 	#    SystemFont ("Apple Color Emoji", "Noto Color Emoji", ...) for its emoji
-	#    fallback, but the WASM runtime has NO system fonts, so that link
-	#    resolves to nothing and every themed Control would tofu. Append the
-	#    bundled fonts after it: on web they do the work; on desktop the system
-	#    emoji still win since they come first.
+	#    fallback, useless on web; the bundled fonts take over there. On desktop
+	#    the SystemFont is kept and the system emoji still win (appended after).
 	var theme: Theme = ThemeDB.get_project_theme()
 	if theme != null:
-		_chain_fallbacks(theme.default_font, extra)
+		_chain_fallbacks(theme.default_font, extra, on_web)
 		for type_name in theme.get_font_type_list():
 			for font_name in theme.get_font_list(type_name):
-				_chain_fallbacks(theme.get_font(font_name, type_name), extra)
+				_chain_fallbacks(theme.get_font(font_name, type_name), extra, on_web)
 
 
 # Append `extra` to a font's fallback chain (dedup, preserving existing entries).
+# When drop_system is true, SystemFont entries are removed first (see _ready).
 # fallbacks returns a copy, so we reassign after editing.
-func _chain_fallbacks(base: Font, extra: Array[Font]) -> void:
+func _chain_fallbacks(base: Font, extra: Array[Font], drop_system: bool) -> void:
 	if base == null:
 		return
 	var chain: Array[Font] = base.fallbacks
 	var changed: bool = false
+	if drop_system:
+		var filtered: Array[Font] = chain.filter(func(f: Font) -> bool: return not (f is SystemFont))
+		if filtered.size() != chain.size():
+			chain = filtered
+			changed = true
 	for f in extra:
 		if not chain.has(f):
 			chain.append(f)
