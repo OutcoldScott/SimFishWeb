@@ -16,6 +16,13 @@
 
 extends Node
 
+# Holds strong references to every font we load/patch for the app's lifetime.
+# Without this, an unreferenced FontFile we patch is freed as soon as _ready
+# returns, and PanelTheme's later preload() of the same path gets a fresh,
+# UNpatched instance from a cold cache - so its glyphs tofu again. Keeping the
+# refs alive makes the resource cache hand PanelTheme our patched instances.
+var _retained: Array[Font] = []
+
 # No single OFL font covers the whole glyph set, so the subset step (see
 # container/subset-fonts.py) splits the monochrome symbols across three Noto
 # sources. The chain tries each in order until a glyph is found.
@@ -25,6 +32,22 @@ const FONT_PATHS := [
 	"res://fonts/web_fallback_symbols1.ttf",
 	"res://fonts/web_fallback_text.ttf",
 	"res://fonts/web_fallback_emoji.ttf",
+]
+
+# UI fonts the panels apply directly via add_theme_font_override (see
+# PanelTheme.FONT_*). These bypass the theme's default_font, so glyphs they
+# lack - e.g. the subscript two in "O₂", or symbols in serif section headers -
+# tofu without their own fallback chain. Resources are cached by path, so
+# patching the loaded instance covers every control that uses it. Keep in sync
+# with the preloads in panel_theme.gd.
+const UI_FONT_PATHS := [
+	"res://assets/fonts/IBMPlexSans-Regular.woff2",
+	"res://assets/fonts/IBMPlexSans-Medium.woff2",
+	"res://assets/fonts/IBMPlexSerif-Regular.woff2",
+	"res://assets/fonts/IBMPlexSerif-Medium.woff2",
+	"res://assets/fonts/IBMPlexSerif-Italic.woff2",
+	"res://assets/fonts/IBMPlexMono-Regular.woff2",
+	"res://assets/fonts/IBMPlexMono-Medium.woff2",
 ]
 
 
@@ -39,6 +62,7 @@ func _ready() -> void:
 	# the project still opens (system fonts cover the glyphs there anyway).
 	if extra.is_empty():
 		return
+	_retained.append_array(extra)
 	# On web the WASM runtime has NO system fonts. A SystemFont with
 	# allow_system_fallback left in a fallback chain sends the web TextServer
 	# into unbounded recursion when it tries (and fails) to resolve a glyph
@@ -57,6 +81,13 @@ func _ready() -> void:
 		for type_name in theme.get_font_type_list():
 			for font_name in theme.get_font_list(type_name):
 				_chain_fallbacks(theme.get_font(font_name, type_name), extra, on_web)
+	# 3) Fonts panels apply directly as per-control overrides (PanelTheme).
+	for path in UI_FONT_PATHS:
+		if ResourceLoader.exists(path):
+			var uf := load(path)
+			if uf is Font:
+				_retained.append(uf)
+				_chain_fallbacks(uf, extra, on_web)
 
 
 # Append `extra` to a font's fallback chain (dedup, preserving existing entries).
