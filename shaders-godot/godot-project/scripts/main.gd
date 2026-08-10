@@ -5996,10 +5996,16 @@ func _on_focus_in() -> void:
 
 # Web only: subscribe to the browser Page Visibility API so we pause the sim
 # only on true backgrounding (tab hidden / window minimized) rather than on
-# mere focus loss. Native builds keep using the FOCUS_OUT/IN notifications in
-# _notification. No-op if the JS interfaces aren't reachable.
+# mere focus loss. Gated behind the server-injected policy flag: by default the
+# web build never pauses under any circumstances. The host page sets
+# window.__walstadLoomPauseOnBackground (see vivarium-serve --pause-on-background
+# / PAUSE_ON_BACKGROUND); if it's absent or false we don't even register the
+# listener. Native builds keep using the FOCUS_OUT/IN notifications in
+# _notification.
 func _setup_web_visibility_pause() -> void:
 	if not OS.has_feature("web"):
+		return
+	if not _web_pause_on_background_enabled():
 		return
 	var doc: Variant = JavaScriptBridge.get_interface("document")
 	if doc == null:
@@ -6007,6 +6013,17 @@ func _setup_web_visibility_pause() -> void:
 	# Retain the callback on the node so it isn't garbage-collected.
 	_js_visibility_cb = JavaScriptBridge.create_callback(_on_web_visibility_change)
 	doc.addEventListener("visibilitychange", _js_visibility_cb)
+
+
+# Read the host page's opt-in flag for pausing on true backgrounding. Defaults
+# to false when the global is undefined (e.g. hosted outside vivarium-serve).
+func _web_pause_on_background_enabled() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	var win: Variant = JavaScriptBridge.get_interface("window")
+	if win == null:
+		return false
+	return bool(win.__walstadLoomPauseOnBackground)
 
 
 func _on_web_visibility_change(_args: Array) -> void:

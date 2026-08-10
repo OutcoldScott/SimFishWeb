@@ -67,6 +67,14 @@ struct Args {
     #[arg(long, default_value_t = 30)]
     client_timeout: u64,
 
+    /// Pause the simulation when the browser tab is truly backgrounded
+    /// (tab hidden / window minimized). Off by default: the sim keeps running
+    /// under all circumstances. When set, the page tells the Godot build to
+    /// freeze the sim on the Page Visibility API's `hidden` state and resume
+    /// when the tab is shown again.
+    #[arg(long)]
+    pause_on_background: bool,
+
     /// Lower-left corner overlay image. Either a local file path (served
     /// same-origin, the robust option under the page's COEP) or an http(s)
     /// URL (the remote must be COEP-embeddable, i.e. send CORP/CORS).
@@ -176,6 +184,7 @@ fn main() {
     println!("  log-metrics     : {}", args.log_metrics);
     println!("  prometheus      : {}", args.prometheus);
     println!("  client-timeout  : {}s", args.client_timeout);
+    println!("  pause-on-bg     : {}", args.pause_on_background);
     if let Some(o) = &overlays.left {
         println!("  overlay-left    : {}", o.src);
     }
@@ -189,6 +198,7 @@ fn main() {
         let overlays = Arc::clone(&overlays);
         let log_metrics = args.log_metrics;
         let prometheus = args.prometheus;
+        let pause_on_background = args.pause_on_background;
         // Each request runs on its own thread so a slow telemetry POST never
         // stalls the static-file path. tiny_http is sync, so this is the
         // standard pattern.
@@ -201,6 +211,7 @@ fn main() {
                 log_metrics,
                 prometheus,
                 timeout,
+                pause_on_background,
             ) {
                 eprintln!("request error: {e}");
             }
@@ -232,6 +243,7 @@ fn handle(
     log_metrics: bool,
     prometheus_enabled: bool,
     client_timeout: Duration,
+    pause_on_background: bool,
 ) -> std::io::Result<()> {
     let method = req.method().clone();
     let url = req.url().to_string();
@@ -288,7 +300,9 @@ fn handle(
         (Method::Get, "/overlay/right") | (Method::Head, "/overlay/right") => {
             serve_overlay(req, overlays.right.as_ref())
         }
-        (Method::Get, _) | (Method::Head, _) => serve_static(req, web_root, &path, overlays),
+        (Method::Get, _) | (Method::Head, _) => {
+            serve_static(req, web_root, &path, overlays, pause_on_background)
+        }
         _ => {
             let resp = Response::from_string("method not allowed").with_status_code(405);
             req.respond(with_common_headers(resp))
@@ -298,7 +312,13 @@ fn handle(
 
 // ---- static file serving -----------------------------------------------------------
 
-fn serve_static(req: Request, web_root: &Path, path: &str, overlays: &Overlays) -> std::io::Result<()> {
+fn serve_static(
+    req: Request,
+    web_root: &Path,
+    path: &str,
+    overlays: &Overlays,
+    pause_on_background: bool,
+) -> std::io::Result<()> {
     let rel = if path == "/" { "/index.html" } else { path };
     // Strip leading '/', reject any traversal. Components::ParentDir would
     // escape the web_root.
@@ -323,7 +343,7 @@ fn serve_static(req: Request, web_root: &Path, path: &str, overlays: &Overlays) 
     // how to POST stats/events) and any configured corner overlays.
     let (bytes, mime) = if candidate.file_name().map(|n| n == "index.html").unwrap_or(false) {
         let html = String::from_utf8_lossy(&bytes).to_string();
-        let injected = inject_html(&html, overlays);
+        let injected = inject_html(&html, overlays, pause_on_background);
         (injected.into_bytes(), "text/html; charset=utf-8".to_string())
     } else {
         (bytes, mime)
@@ -524,8 +544,19 @@ const TELEMETRY_SHIM: &str = r#"<script>
 </script>
 "#;
 
-fn inject_html(html: &str, overlays: &Overlays) -> String {
+// Expose the pause-on-background policy to the Godot build. The GDScript side
+// reads window.__walstadLoomPauseOnBackground via JavaScriptBridge and only
+// freezes the sim on true backgrounding when it is true. Absent or false
+// (the default) means the sim never pauses on the web.
+fn pause_config_script(pause_on_background: bool) -> String {
+    format!(
+        "<script>window.__walstadLoomPauseOnBackground = {pause_on_background};</script>\n"
+    )
+}
+
+fn inject_html(html: &str, overlays: &Overlays, pause_on_background: bool) -> String {
     let mut injected = String::with_capacity(html.len() + TELEMETRY_SHIM.len() + 512);
+    injected.push_str(&pause_config_script(pause_on_background));
     injected.push_str(TELEMETRY_SHIM);
     injected.push_str(&overlay_markup(overlays));
     // Inject just before </body>; if missing (shouldn't happen for Godot's

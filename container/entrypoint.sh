@@ -9,6 +9,9 @@
 #                   discrete events are logged regardless
 #   PROMETHEUS      expose /metrics        (true sets --prometheus)
 #   CLIENT_TIMEOUT  seconds before a client expires from /metrics
+#   PAUSE_ON_BACKGROUND  pause the sim when the tab is truly backgrounded
+#                        (true sets --pause-on-background). Off by default:
+#                        the simulation keeps running under all circumstances.
 #   OVERLAY_LEFT          path or http(s) URL for the lower-left overlay
 #   OVERLAY_LEFT_WIDTH    CSS width  for the left overlay (e.g. 120px, 10%)
 #   OVERLAY_LEFT_HEIGHT   CSS height for the left overlay
@@ -45,6 +48,10 @@ fi
 
 if [[ -n "${CLIENT_TIMEOUT:-}" ]]; then
     args+=( --client-timeout "$CLIENT_TIMEOUT" )
+fi
+
+if is_truthy "${PAUSE_ON_BACKGROUND:-}"; then
+    args+=( --pause-on-background )
 fi
 
 # Corner overlays. Each --overlay-* flag is added only when the matching env
