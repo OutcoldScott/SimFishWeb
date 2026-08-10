@@ -610,6 +610,10 @@ const EDGE_SWIPE_MIN_PX: float = 80.0
 # already in effect (aquascape mode, manual pause) so we don't clobber it.
 var _focus_paused: bool = false
 var _focus_saved_time_scale: float = 1.0
+# Web only: retained reference to the Page Visibility API callback. Must be
+# kept alive for the lifetime of the node or the JS<->GDScript binding is
+# garbage-collected and the listener stops firing.
+var _js_visibility_cb: Variant = null
 
 # ---- Aquascape radial menu (mobile only) ----
 # Replaces the long-press-toggles-auto-orbit gesture WHEN in aquascape mode,
@@ -802,8 +806,9 @@ func _ready() -> void:
 	# we start spawning entities into it.
 	if _sim != null:
 		call_deferred("_try_load_saved_state")
-		
+
 	_build_portal_info_ui()
+	_setup_web_visibility_pause()
 
 
 func _toggle_portal() -> void:
@@ -5933,17 +5938,24 @@ func _show_corrupt_save_prompt(state_path: String) -> void:
 # pause is best-effort: if some other code (manual pause, aquascape) already
 # zeroed time_scale we leave it alone so we don't accidentally un-pause.
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT \
+	# On web the FOCUS_OUT/IN notifications fire on mere loss of input focus,
+	# e.g. clicking another window or tab, or opening devtools, even while the
+	# tab stays fully visible. Freezing the sim for that is jarring, so the web
+	# build ignores these notifications and instead drives pause/resume from the
+	# browser Page Visibility API (see _setup_web_visibility_pause), which only
+	# fires on true backgrounding (tab hidden / window minimized).
+	var web: bool = OS.has_feature("web")
+	if (what == NOTIFICATION_APPLICATION_FOCUS_OUT \
 			or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT \
-			or what == NOTIFICATION_APPLICATION_PAUSED:
+			or what == NOTIFICATION_APPLICATION_PAUSED) and not web:
 		# APPLICATION_PAUSED is the Android lifecycle event that fires when
 		# the activity is moved to onPause (full backgrounding). FOCUS_OUT
 		# fires on overlays / lock screen too. We treat all three the same:
 		# stop ticking the sim so the device can sleep its CPU/GPU.
 		_on_focus_out()
-	elif what == NOTIFICATION_APPLICATION_FOCUS_IN \
+	elif (what == NOTIFICATION_APPLICATION_FOCUS_IN \
 			or what == NOTIFICATION_WM_WINDOW_FOCUS_IN \
-			or what == NOTIFICATION_APPLICATION_RESUMED:
+			or what == NOTIFICATION_APPLICATION_RESUMED) and not web:
 		_on_focus_in()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_persist_last_quit_unix()
@@ -5980,6 +5992,31 @@ func _on_focus_in() -> void:
 		return
 	_sim.time_scale = _focus_saved_time_scale
 	_focus_paused = false
+
+
+# Web only: subscribe to the browser Page Visibility API so we pause the sim
+# only on true backgrounding (tab hidden / window minimized) rather than on
+# mere focus loss. Native builds keep using the FOCUS_OUT/IN notifications in
+# _notification. No-op if the JS interfaces aren't reachable.
+func _setup_web_visibility_pause() -> void:
+	if not OS.has_feature("web"):
+		return
+	var doc: Variant = JavaScriptBridge.get_interface("document")
+	if doc == null:
+		return
+	# Retain the callback on the node so it isn't garbage-collected.
+	_js_visibility_cb = JavaScriptBridge.create_callback(_on_web_visibility_change)
+	doc.addEventListener("visibilitychange", _js_visibility_cb)
+
+
+func _on_web_visibility_change(_args: Array) -> void:
+	var doc: Variant = JavaScriptBridge.get_interface("document")
+	if doc == null:
+		return
+	if bool(doc.hidden):
+		_on_focus_out()
+	else:
+		_on_focus_in()
 
 
 func _persist_last_quit_unix() -> void:
